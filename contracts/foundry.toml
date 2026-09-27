@@ -1,0 +1,25 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+evm_version = "cancun"
+fs_permissions = [{ access = "read", path = "./" }]
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+
+[rpc_endpoints]
+arc_testnet = "${ARC_TESTNET_RPC_URL}"
+arc_mainnet = "${ARC_MAINNET_RPC_URL}"
+
+# Blockscout verifiers (no API key required)
+[etherscan]
+arc_testnet = { key = "verify", url = "https://explorer.testnet.arc.io/api/", chain = 5042002 }
+arc_mainnet = { key = "verify", url = "https://explorer.arc.io/api/", chain = 5042 }

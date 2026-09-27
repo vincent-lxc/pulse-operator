@@ -1,0 +1,16 @@
+.env
+*.pem
+/data/
+/agent/data/
+.idea/
+.vscode/
+.DS_Store
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Go
+agent/coverage.out
+*.test
