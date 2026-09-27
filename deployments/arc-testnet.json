@@ -1,0 +1,153 @@
+{
+  "network": "arc-testnet",
+  "chainId": 5042002,
+  "rpc": "https://rpc.testnet.arc.io",
+  "explorer": "https://testnet.arcscan.app",
+  "contracts": {
+    "PolicyVault": {
+      "address": "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01",
+      "deployTx": "0x8f8f79965023ac3ea0e6dc561f5b48a124802650bd2a3ba04ad79bf000c91817",
+      "block": 64231944,
+      "blockTimestamp": 1790493071,
+      "deployedAtUTC": "2026-09-27T07:11:11Z",
+      "gasUsed": 2110389,
+      "effectiveGasPriceWei": 22000000000,
+      "sourceCommit": "607e605488709f43bda51016083c2287c32f2bfb",
+      "sourcePath": "contracts/src/PolicyVault.sol",
+      "compiler": "solc 0.8.24, optimizer 200 runs, evm cancun",
+      "verified": {
+        "explorer": "Blockscout (testnet.arcscan.app -> explorer.testnet.arc.io)",
+        "status": "verified (full match)",
+        "verifiedAtUTC": "2026-09-27T07:11:16Z",
+        "url": "https://testnet.arcscan.app/address/0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01?tab=contract"
+      },
+      "constructor": {
+        "token": "0x3600000000000000000000000000000000000000",
+        "owner": "0x60C35aBAF3B7eA46646e8e796181c9b583C191C7",
+        "agent": "0xb71c11F7b28D9A912e7C3ACfbe423f7DeA568DEa",
+        "reserve": "0x60C35aBAF3B7eA46646e8e796181c9b583C191C7"
+      }
+    }
+  },
+  "smokeTest": {
+    "policy": {
+      "category": "api",
+      "categoryBytes32": "0x6170690000000000000000000000000000000000000000000000000000000000",
+      "budgetPerEpoch": "2000000 (2 USDC)",
+      "perTxCap": "1000000 (1 USDC)",
+      "periodSeconds": 604800,
+      "overLimitMode": "Escalate",
+      "payee": "0xf1E6D4369a589D5542eA15d0627d7675B84F2f1b",
+      "payeeNote": "throwaway address generated with `cast wallet new`; key discarded"
+    },
+    "decisions": {
+      "set_policy": {
+        "json": "{v:1,actor:owner,action:set_policy,category:api,budget_usdc:2,per_tx_cap_usdc:1,period:7d,payee:0xf1E6D4369a589D5542eA15d0627d7675B84F2f1b,note:arc-testnet smoke}",
+        "hash": "0x036b904387c115d760d54d12d61e89b892729af7a49e180c7cd4d191345ad910"
+      },
+      "pay_ok": {
+        "json": "{v:1,actor:agent,action:pay,category:api,payee:0xf1E6D4369a589D5542eA15d0627d7675B84F2f1b,amount_usdc:0.5,reason:api credits top-up, within policy,note:arc-testnet smoke #1}",
+        "hash": "0xb4bef68d1685f14e81d417676d442fc81d1e9ecf538db6d7c271df9eab8f42cf"
+      },
+      "pay_big": {
+        "json": "{v:1,actor:agent,action:pay,category:api,payee:0xf1E6D4369a589D5542eA15d0627d7675B84F2f1b,amount_usdc:1.5,reason:annual api plan, exceeds per-tx cap,note:arc-testnet smoke #2}",
+        "hash": "0x331ebc4c11a8dd0cd9e4f7c1a012288a7df77dcf12deaf13e992a7e9e29a84c6"
+      },
+      "sweep": {
+        "json": "{v:1,actor:owner,action:sweep_to_reserve,amount_usdc:0.5,note:arc-testnet smoke #3}",
+        "hash": "0xca7977ade2f90ba945328e3208411a2dd4325ec55433ea219c816ed9bb20d628"
+      }
+    },
+    "txs": [
+      {
+        "step": "deposit",
+        "tx": "0x3d6eecbd3faa5bfe13e3c38466eb39eece796947bdd205108ad542622b3ce7a2",
+        "block": 64232175,
+        "status": 1,
+        "gasUsed": 48950,
+        "effectiveGasPrice": 22000000000,
+        "logs": 2
+      },
+      {
+        "step": "setCategory",
+        "tx": "0x476d7ee771599b870a6cd4a3599c8fe1d4eeb9ced55e02608b4a0cbbf2ba450b",
+        "block": 64232179,
+        "status": 1,
+        "gasUsed": 122641,
+        "effectiveGasPrice": 22000000000,
+        "logs": 1
+      },
+      {
+        "step": "setPayee",
+        "tx": "0xb7d6102e8fbf4f583244a9c5630b31e103d37d155f0357d8d5994f146c96a273",
+        "block": 64232183,
+        "status": 1,
+        "gasUsed": 49333,
+        "effectiveGasPrice": 22000000000,
+        "logs": 1
+      },
+      {
+        "step": "payWithinLimits",
+        "tx": "0xfc7d5e40ee594803aef7d7a5560464ce22667d4d0dac5c529cfdeae2a2c9a613",
+        "block": 64232187,
+        "status": 1,
+        "gasUsed": 192163,
+        "effectiveGasPrice": 22000000000,
+        "logs": 3
+      },
+      {
+        "step": "payOverCap",
+        "tx": "0x8a8d5cfbb965fe5312cf3b332722f067ea5889a65d5aebdde1d3d272801c0a33",
+        "block": 64232192,
+        "status": 1,
+        "gasUsed": 286069,
+        "effectiveGasPrice": 22000000000,
+        "logs": 1
+      },
+      {
+        "step": "approve1",
+        "tx": "0xde4cc4ae935a36af5fb05084d696b369188ead78330c6778741317f830fec266",
+        "block": 64232197,
+        "status": 1,
+        "gasUsed": 133048,
+        "effectiveGasPrice": 22000000000,
+        "logs": 3
+      },
+      {
+        "step": "sweep",
+        "tx": "0xaa486882107383ac2d1ccdc04134f819de8464bcce89223fcb49fbee62ea836a",
+        "block": 64232202,
+        "status": 1,
+        "gasUsed": 60697,
+        "effectiveGasPrice": 22000000000,
+        "logs": 3
+      }
+    ],
+    "nonAllowlistedProbe": {
+      "method": "eth_call (no tx)",
+      "from": "0xb71c11F7b28D9A912e7C3ACfbe423f7DeA568DEa",
+      "payee": "0xcFa5B889Ab04EFDd8163232205AAaC6E739dcaF4",
+      "amount": "100000",
+      "decisionJson": "{\"v\":1,\"actor\":\"agent\",\"action\":\"pay\",\"category\":\"api\",\"payee\":\"0xcFa5B889Ab04EFDd8163232205AAaC6E739dcaF4\",\"amount_usdc\":\"0.1\",\"note\":\"non-allowlisted probe\"}",
+      "result": "reverted PayeeNotAllowed(bytes32,address) selector 0x381b76e5"
+    },
+    "finalState": {
+      "counters": {
+        "decidedByAgent": 1,
+        "escalated": 1,
+        "approved": 1,
+        "rejected": 0
+      },
+      "apiEpoch": {
+        "spent": "2000000",
+        "autoSpent": "500000",
+        "approvedSpent": "1500000",
+        "remaining": "0"
+      },
+      "request1Status": "Approved",
+      "vaultUsdc": "2500000",
+      "payeeUsdc": "2000000",
+      "pending": 0
+    }
+  }
+}

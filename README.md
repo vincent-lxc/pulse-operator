@@ -82,6 +82,15 @@ forge script script/Deploy.s.sol:DeployPolicyVault \
 `PRIVATE_KEY` is read from the environment only. The script refuses Arc mainnet unless
 `CONFIRM_MAINNET=1`. Fund the vault by transferring USDC (ERC-20) to its address.
 
+**Live on Arc testnet:** PolicyVault
+[`0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01`](https://testnet.arcscan.app/address/0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01)
+(source verified). The end-to-end smoke test (deposit → policy → agent pay → escalation → owner approve →
+non-allowlisted revert → sweep) is written up in [docs/testnet-smoke.md](docs/testnet-smoke.md), with the
+record in [deployments/arc-testnet.json](deployments/arc-testnet.json).
+
+> Foundry's local EVM can't simulate Arc USDC transfers: they go through a precompile at `0x1800…`. For live calls that
+> move USDC, use `cast send` (see `contracts/script/smoke-testnet.sh`). The tests use `MockERC20`.
+
 ## License
 
 MIT
