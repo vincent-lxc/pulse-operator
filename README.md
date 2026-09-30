@@ -4,8 +4,9 @@ An AI operator agent that pays for things in **USDC on Arc** — inside a spendi
 cannot talk its way out of. Built for the **Tameion Agents Hackathon** (Canteen x Circle, on Arc).
 
 - `contracts/` — Foundry project. `PolicyVault.sol` (new) holds the funds and enforces the policy.
-- `agent/` — Go agent pipeline reused from pulse-on-monad: rule candidates → hard risk gate →
-  optional TypeSafe Jev soft gate → audit JSONL → `decisionHash` stamped on chain.
+- `agent/` — runnable deterministic invoice CLI (`cmd/operator`) → stable payment identity →
+  PolicyVault ABI dry-run / local MockERC20 payment → durable recovery journal. The inherited
+  trading/Jev/Monad stamp libraries remain separate; no real model runs in the payment demo.
 - Pre-event code is isolated in the `tameion-start` commit (see [BASELINE.md](BASELINE.md)).
   Everything built during the event:
   <https://github.com/vincent-lxc/pulse-operator/compare/tameion-start...main>
@@ -90,6 +91,24 @@ record in [deployments/arc-testnet.json](deployments/arc-testnet.json).
 
 > Foundry's local EVM can't simulate Arc USDC transfers: they go through a precompile at `0x1800…`. For live calls that
 > move USDC, use `cast send` (see `contracts/script/smoke-testnet.sh`). The tests use `MockERC20`.
+
+## Runnable local payment demo
+
+```bash
+cd agent && go test ./... && cd ..
+python3 scripts/local-demo.py
+```
+
+This launches its own silent local Anvil chain, deploys **MockERC20** + PolicyVault,
+pays 0.50 mock USDC, escalates a 1.50 over-cap invoice for explicit local owner
+approval, and verifies that process restarts and journal loss do not double-pay.
+Default CLI mode is Arc PolicyVault **ABI dry-run without network**. Sending is
+restricted to loopback chain 31337 and unlocked local development accounts; no
+wallet/private key is read. Planner input is a deterministic invoice, **not live
+AI output**; actual Arc USDC payments and real model integration are not exercised.
+
+See [commands, identity/recovery behavior and exact boundaries](docs/local-payment-demo.md).
+CI runs contracts, Go regressions and this local chain demo.
 
 ## License
 
