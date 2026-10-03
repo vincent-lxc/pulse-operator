@@ -1,0 +1,23 @@
+balance_usdc: "20.00"
+paused: false
+reserve: "0x60C35aBAF3B7eA46646e8e796181c9b583C191C7"
+categories:
+  - name: infra
+    budget_usdc: "20.00"
+    per_tx_cap_usdc: "5.00"
+    spent_usdc: "0"
+    period_seconds: 604800
+    payees:
+      - "0x1111111111111111111111111111111111111111"
+  - name: people
+    budget_usdc: "20.00"
+    per_tx_cap_usdc: "1.00"
+    spent_usdc: "0"
+    period_seconds: 604800
+    payees:
+      - "0x2222222222222222222222222222222222222222"
+inflows:
+  - tx_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    from: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    amount_usdc: "5.00"
+    block: 64232175

@@ -110,6 +110,20 @@ AI output**; actual Arc USDC payments and real model integration are not exercis
 See [commands, identity/recovery behavior and exact boundaries](docs/local-payment-demo.md).
 CI runs contracts, Go regressions and this local chain demo.
 
+## Treasury operator (hackathon loop)
+
+`operator/` is a service on [github.com/digitalwayhk/core](https://github.com/digitalwayhk/core).
+One dry-run command reads a sample payable ledger, decides, and writes an audit log plus
+core models the admin view can list:
+
+```bash
+scripts/operator-dry-run.sh
+```
+
+That run pays, defers, escalates, and sweeps. It does not broadcast. Live Arc testnet
+steps, the RFB loop map, and a short screen-record script are in
+[docs/operator-agent.md](docs/operator-agent.md).
+
 ## License
 
 MIT
