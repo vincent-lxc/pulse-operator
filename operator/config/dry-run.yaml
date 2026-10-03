@@ -1,0 +1,49 @@
+# Dry-run demo. No private keys. Chain state comes from testdata/vault.yaml.
+mode: dry-run
+agentID: pulse-operator
+chainID: "5042002"
+vault: "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01"
+agent: "0xb71c11F7b28D9A912e7C3ACfbe423f7DeA568DEa"
+usdc: "0x3600000000000000000000000000000000000000"
+chainDriver: mock
+vaultFixture: testdata/vault.yaml
+ledger: testdata/ledger.yaml
+auditLog: data/audit.jsonl
+fromBlock: 64231944
+dueHorizon: 168h
+cooldown: 1h
+reserveFloorUSDC: "8.00"
+reserveTargetUSDC: "10.00"
+clock: "2026-10-03T12:00:00Z"
+loopInterval: 0s
+llm:
+  enabled: false
+  urlEnv: OPERATOR_LLM_URL
+notify:
+  driver: log
+secrets:
+  rpcEnv: ARC_RPC_URL
+  agentKeyEnv: OPERATOR_PRIVATE_KEY
+  agentKeyFile: ""
+  ownerKeyEnv: OWNER_PRIVATE_KEY
+  ownerKeyFile: ""
+gas:
+  maxFeePerGasGwei: 50
+  maxPriorityFeePerGasGwei: 2
+# Dry-run tags decisions as Circle Wallets and does not call Circle.
+# Live mode with the same executor sends pay through the Wallets API.
+executor: circle-wallets
+circle:
+  blockchain: ARC-TESTNET
+  apiBase: https://api.circle.com
+  irisBase: https://iris-api-sandbox.circle.com
+  cli: circle
+  apiKeyEnv: CIRCLE_API_KEY
+  entitySecretEnv: CIRCLE_ENTITY_SECRET
+  walletIDEnv: CIRCLE_WALLET_ID
+  ownerWalletIDEnv: CIRCLE_OWNER_WALLET_ID
+  agentAddressEnv: CIRCLE_AGENT_ADDRESS
+  ownerAddressEnv: CIRCLE_OWNER_ADDRESS
+  cctp:
+    enabled: true
+    burns: []
