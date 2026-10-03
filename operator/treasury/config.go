@@ -32,6 +32,39 @@ type Config struct {
 	Notify            NotifyConfig  `yaml:"notify"`
 	Secrets           SecretConfig  `yaml:"secrets"`
 	Gas               GasConfig     `yaml:"gas"`
+	Executor          string        `yaml:"executor"`
+	Circle            CircleConfig  `yaml:"circle"`
+}
+
+// CircleConfig 选择 Circle 产品。值里只有环境变量名和文件路径，没有密钥。
+type CircleConfig struct {
+	Blockchain        string     `yaml:"blockchain"`
+	APIBase           string     `yaml:"apiBase"`
+	IrisBase          string     `yaml:"irisBase"`
+	CLI               string     `yaml:"cli"`
+	APIKeyEnv         string     `yaml:"apiKeyEnv"`
+	APIKeyFile        string     `yaml:"apiKeyFile"`
+	EntitySecretEnv   string     `yaml:"entitySecretEnv"`
+	EntitySecretFile  string     `yaml:"entitySecretFile"`
+	WalletIDEnv       string     `yaml:"walletIDEnv"`
+	WalletIDFile      string     `yaml:"walletIDFile"`
+	OwnerWalletIDEnv  string     `yaml:"ownerWalletIDEnv"`
+	OwnerWalletIDFile string     `yaml:"ownerWalletIDFile"`
+	AgentAddressEnv   string     `yaml:"agentAddressEnv"`
+	OwnerAddressEnv   string     `yaml:"ownerAddressEnv"`
+	CCTP              CCTPConfig `yaml:"cctp"`
+}
+
+// CCTPConfig 列出要向 Iris 确认的 burn 交易。dry-run 不拨号。
+type CCTPConfig struct {
+	Enabled bool       `yaml:"enabled"`
+	Burns   []CCTPBurn `yaml:"burns"`
+}
+
+// CCTPBurn 是一笔源链 burn，用来在 Arc 上确认 USDC 铸出。
+type CCTPBurn struct {
+	SourceDomain uint32 `yaml:"sourceDomain"`
+	TxHash       string `yaml:"txHash"`
 }
 
 // LLMConfig 控制可选软判断，默认关闭。
@@ -94,6 +127,39 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.FromBlock == 0 {
 		cfg.FromBlock = 64231944
 	}
+	if cfg.Executor == "" {
+		cfg.Executor = "raw-key"
+	}
+	if cfg.Circle.APIBase == "" {
+		cfg.Circle.APIBase = "https://api.circle.com"
+	}
+	if cfg.Circle.IrisBase == "" {
+		cfg.Circle.IrisBase = "https://iris-api-sandbox.circle.com"
+	}
+	if cfg.Circle.CLI == "" {
+		cfg.Circle.CLI = "circle"
+	}
+	if cfg.Circle.APIKeyEnv == "" {
+		cfg.Circle.APIKeyEnv = "CIRCLE_API_KEY"
+	}
+	if cfg.Circle.EntitySecretEnv == "" {
+		cfg.Circle.EntitySecretEnv = "CIRCLE_ENTITY_SECRET"
+	}
+	if cfg.Circle.WalletIDEnv == "" {
+		cfg.Circle.WalletIDEnv = "CIRCLE_WALLET_ID"
+	}
+	if cfg.Circle.OwnerWalletIDEnv == "" {
+		cfg.Circle.OwnerWalletIDEnv = "CIRCLE_OWNER_WALLET_ID"
+	}
+	if cfg.Circle.AgentAddressEnv == "" {
+		cfg.Circle.AgentAddressEnv = "CIRCLE_AGENT_ADDRESS"
+	}
+	if cfg.Circle.OwnerAddressEnv == "" {
+		cfg.Circle.OwnerAddressEnv = "CIRCLE_OWNER_ADDRESS"
+	}
+	if cfg.Circle.Blockchain == "" {
+		cfg.Circle.Blockchain = BlockchainForChain(cfg.ChainID)
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -107,6 +173,11 @@ func (c Config) Validate() error {
 	}
 	if c.ChainDriver != "mock" && c.ChainDriver != "rpc" {
 		return fmt.Errorf("chainDriver must be mock or rpc")
+	}
+	switch c.Executor {
+	case "raw-key", "circle-wallets", "circle-agent":
+	default:
+		return fmt.Errorf("executor must be raw-key, circle-wallets, or circle-agent")
 	}
 	if c.Mode == "live" && c.ChainDriver != "rpc" {
 		return fmt.Errorf("live mode requires chainDriver rpc")
@@ -170,4 +241,24 @@ func (c Config) PolicyFrom(now time.Time) (Policy, error) {
 		Cooldown:      c.Cooldown,
 		Now:           now.UTC(),
 	}, nil
+}
+
+// ExecutorProduct 返回这一轮执行器对应的审计标签。
+func (c Config) ExecutorProduct() string {
+	switch c.Executor {
+	case "circle-wallets":
+		return ProductWallets
+	case "circle-agent":
+		return ProductAgent
+	default:
+		return ProductLocalKey
+	}
+}
+
+// BlockchainForChain 把 Arc chain id 映射成 Circle 的区块链名。
+func BlockchainForChain(chainID string) string {
+	if chainID == "5042" {
+		return "ARC"
+	}
+	return "ARC-TESTNET"
 }

@@ -24,9 +24,18 @@ func LoadPrivateKey(envName, filePath string) (*ecdsa.PrivateKey, error) {
 }
 
 func loadHex(envName, filePath string) (string, error) {
+	raw, err := LoadSecret(envName, filePath)
+	if err != nil || raw == "" {
+		return "", err
+	}
+	return strings.TrimPrefix(raw, "0x"), nil
+}
+
+// LoadSecret 读取一段机密。环境变量优先；文件必须是 0600 或更严。两者都空时返回空串。
+func LoadSecret(envName, filePath string) (string, error) {
 	if envName != "" {
 		if v := strings.TrimSpace(os.Getenv(envName)); v != "" {
-			return strings.TrimPrefix(v, "0x"), nil
+			return v, nil
 		}
 	}
 	if strings.TrimSpace(filePath) == "" {
@@ -38,11 +47,11 @@ func loadHex(envName, filePath string) (string, error) {
 	}
 	perm := info.Mode().Perm()
 	if perm&0o077 != 0 {
-		return "", fmt.Errorf("key file %s must not be readable by group or others (mode %o)", filePath, perm)
+		return "", fmt.Errorf("secret file %s must not be readable by group or others (mode %o)", filePath, perm)
 	}
 	b, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimPrefix(strings.TrimSpace(string(b)), "0x"), nil
+	return strings.TrimSpace(string(b)), nil
 }

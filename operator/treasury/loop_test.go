@@ -2,6 +2,7 @@ package treasury
 
 import (
 	"context"
+	"math/big"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -63,8 +64,12 @@ func TestDryRunSampleProducesPayDeferSweepEscalation(t *testing.T) {
 	if sweep.Action != ActionSweep || sweep.Outcome != "simulated_swept" || FormatUSDC(sweep.Amount) != "4.400000" {
 		t.Fatalf("sweep: %+v amount %s", sweep, FormatUSDC(sweep.Amount))
 	}
-	if len(report.Inflows) != 1 || FormatUSDC(report.Inflows[0].Amount) != "5.000000" {
+	if len(report.Inflows) != 2 || report.Inflows[0].Product != ProductCCTP || report.Inflows[1].Product != ProductGateway {
 		t.Fatalf("inflows: %+v", report.Inflows)
+	}
+	sum := new(big.Int).Add(report.Inflows[0].Amount, report.Inflows[1].Amount)
+	if FormatUSDC(sum) != "5.000000" {
+		t.Fatalf("inflow sum %s", FormatUSDC(sum))
 	}
 }
 

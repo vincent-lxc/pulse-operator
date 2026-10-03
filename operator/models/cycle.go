@@ -17,6 +17,7 @@ type CycleSnapshot struct {
 	ReserveTargetUnits string `json:"reserveTargetUnits" desc:"储备目标"`
 	SurplusUnits       string `json:"surplusUnits" desc:"可划转超额"`
 	ObservedAt         string `json:"observedAt" desc:"观察时间"`
+	CircleProduct      string `json:"circle" desc:"Circle 产品"`
 }
 
 // NewCycleSnapshot 创建完整初始化的快照。

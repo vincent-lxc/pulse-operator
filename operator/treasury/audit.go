@@ -17,6 +17,7 @@ type AuditEvent struct {
 	DecisionHash string          `json:"decision_hash,omitempty"`
 	TxHash       string          `json:"tx_hash,omitempty"`
 	Outcome      string          `json:"outcome,omitempty"`
+	Circle       string          `json:"circle,omitempty"`
 	Payload      json.RawMessage `json:"payload"`
 }
 

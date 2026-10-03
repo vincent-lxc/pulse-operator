@@ -10,14 +10,15 @@ import (
 // Revenue 是一笔收入观察。
 type Revenue struct {
 	*BusinessModel
-	Code        string `gorm:"uniqueIndex" json:"code" desc:"来源键"`
-	Source      string `json:"source" desc:"chain 或 http"`
-	Ref         string `json:"ref" desc:"交易哈希或手工参考号"`
-	FromAddress string `json:"fromAddress" desc:"付款方"`
-	AmountUnits string `json:"amountUnits" desc:"金额（USDC 最小单位）"`
-	ObservedAt  string `json:"observedAt" desc:"观察时间"`
-	Memo        string `json:"memo" desc:"备注"`
-	Reconciled  bool   `json:"reconciled" desc:"是否已计入某轮余额"`
+	Code          string `gorm:"uniqueIndex" json:"code" desc:"来源键"`
+	Source        string `json:"source" desc:"chain 或 http"`
+	Ref           string `json:"ref" desc:"交易哈希或手工参考号"`
+	FromAddress   string `json:"fromAddress" desc:"付款方"`
+	AmountUnits   string `json:"amountUnits" desc:"金额（USDC 最小单位）"`
+	ObservedAt    string `json:"observedAt" desc:"观察时间"`
+	Memo          string `json:"memo" desc:"备注"`
+	Reconciled    bool   `json:"reconciled" desc:"是否已计入某轮余额"`
+	CircleProduct string `json:"circle" desc:"Circle 产品"`
 }
 
 // NewRevenue 创建完整初始化的收入记录。
@@ -41,7 +42,7 @@ func (own *Revenue) GetHash() string {
 }
 
 // InsertRevenue 写入一笔收入。相同编码已存在时忽略。
-func InsertRevenue(source, ref, from, amount, observedAt, memo string) (*Revenue, error) {
+func InsertRevenue(source, ref, from, amount, observedAt, memo, circle string) (*Revenue, error) {
 	code := source + ":" + strings.ToLower(strings.TrimSpace(ref))
 	existing, err := findRevenue(code)
 	if err != nil {
@@ -58,6 +59,7 @@ func InsertRevenue(source, ref, from, amount, observedAt, memo string) (*Revenue
 	row.AmountUnits = amount
 	row.ObservedAt = observedAt
 	row.Memo = memo
+	row.CircleProduct = circle
 	touchNew(row.SetID, row.SetCreatedAt, row.SetUpdatedAt, row.SetHashcode, row.GetHash(), 0)
 	if err := getDataAction().Insert(row); err != nil {
 		return nil, err

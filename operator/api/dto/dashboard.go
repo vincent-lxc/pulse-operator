@@ -8,6 +8,7 @@ type DashboardResponse struct {
 	Balance     string                  `json:"balance" desc:"余额"`
 	Obligations string                  `json:"obligations" desc:"窗口内未付"`
 	Surplus     string                  `json:"surplus" desc:"可划转超额"`
+	Circle      string                  `json:"circle" desc:"Circle 产品"`
 	Categories  []business.CategoryView `json:"categories" desc:"品类预算"`
 	Decisions   []business.DecisionView `json:"decisions" desc:"决策"`
 	Approvals   []business.ApprovalView `json:"approvals" desc:"待审批"`
@@ -20,6 +21,7 @@ func NewDashboardResponse(view business.Dashboard) *DashboardResponse {
 		Balance:     view.Balance,
 		Obligations: view.Obligations,
 		Surplus:     view.Surplus,
+		Circle:      view.CircleProduct,
 		Categories:  view.Categories,
 		Decisions:   view.Decisions,
 		Approvals:   view.Approvals,
@@ -31,6 +33,7 @@ func NewDashboardResponse(view business.Dashboard) *DashboardResponse {
 type RevenueResponse struct {
 	Status string `json:"status" desc:"accepted"`
 	Ref    string `json:"ref" desc:"参考号"`
+	Circle string `json:"circle,omitempty" desc:"Circle 产品"`
 }
 
 // RunOnceResponse 是手动触发一轮后的摘要。

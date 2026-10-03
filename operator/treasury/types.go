@@ -54,11 +54,12 @@ type Category struct {
 
 // Inflow 是一笔观察到的 USDC 流入。
 type Inflow struct {
-	TxHash string
-	From   string
-	Amount *big.Int
-	Block  uint64
-	Source string
+	TxHash  string
+	From    string
+	Amount  *big.Int
+	Block   uint64
+	Source  string
+	Product string
 }
 
 // Approval 是链上或本地记录的待人工审批。
@@ -122,6 +123,7 @@ type Decision struct {
 	RequestID    string
 	SoftNote     string
 	Calldata     string
+	Product      string
 }
 
 // Liquidity 是余额、即将到期义务和储备目标的对照。

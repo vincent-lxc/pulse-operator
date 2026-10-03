@@ -31,6 +31,7 @@ type fixtureInflow struct {
 	From       string `yaml:"from"`
 	AmountUSDC string `yaml:"amount_usdc"`
 	Block      uint64 `yaml:"block"`
+	Circle     string `yaml:"circle"`
 }
 
 // LoadFixture 读取金库 YAML 快照。
@@ -90,12 +91,19 @@ func LoadFixture(path string) (Snapshot, error) {
 		if err != nil {
 			return Snapshot{}, err
 		}
+		product := in.Circle
+		source := product
+		if source == "" {
+			source = "chain"
+			product = ProductLocalRPC
+		}
 		snap.Inflows = append(snap.Inflows, Inflow{
-			TxHash: strings.ToLower(in.TxHash),
-			From:   NormalizeAddress(in.From),
-			Amount: amount,
-			Block:  in.Block,
-			Source: "chain",
+			TxHash:  strings.ToLower(in.TxHash),
+			From:    NormalizeAddress(in.From),
+			Amount:  amount,
+			Block:   in.Block,
+			Source:  source,
+			Product: product,
 		})
 	}
 	return snap, nil

@@ -31,3 +31,24 @@ secrets:
 gas:
   maxFeePerGasGwei: 50
   maxPriorityFeePerGasGwei: 2
+# raw-key keeps the go-ethereum signer. Switch to circle-wallets or circle-agent
+# and export the env vars named below. Do not put secret values in this file.
+executor: raw-key
+circle:
+  blockchain: ARC-TESTNET
+  apiBase: https://api.circle.com
+  irisBase: https://iris-api-sandbox.circle.com
+  cli: circle
+  apiKeyEnv: CIRCLE_API_KEY
+  apiKeyFile: ""
+  entitySecretEnv: CIRCLE_ENTITY_SECRET
+  entitySecretFile: ""
+  walletIDEnv: CIRCLE_WALLET_ID
+  walletIDFile: ""
+  ownerWalletIDEnv: CIRCLE_OWNER_WALLET_ID
+  ownerWalletIDFile: ""
+  agentAddressEnv: CIRCLE_AGENT_ADDRESS
+  ownerAddressEnv: CIRCLE_OWNER_ADDRESS
+  cctp:
+    enabled: true
+    burns: []

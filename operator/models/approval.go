@@ -10,14 +10,15 @@ import (
 // Approval 是一条待人工确认的请求。
 type Approval struct {
 	*BusinessModel
-	Code         string `gorm:"uniqueIndex" json:"code" desc:"审批键"`
-	RequestID    string `json:"requestID" desc:"链上请求号"`
-	CategoryCode string `json:"categoryCode" desc:"品类"`
-	Payee        string `json:"payee" desc:"收款地址"`
-	AmountUnits  string `json:"amountUnits" desc:"金额（USDC 最小单位）"`
-	DecisionHash string `json:"decisionHash" desc:"decisionHash"`
-	State        string `json:"state" desc:"状态"`
-	ReasonCode   string `json:"reasonCode" desc:"原因码"`
+	Code          string `gorm:"uniqueIndex" json:"code" desc:"审批键"`
+	RequestID     string `json:"requestID" desc:"链上请求号"`
+	CategoryCode  string `json:"categoryCode" desc:"品类"`
+	Payee         string `json:"payee" desc:"收款地址"`
+	AmountUnits   string `json:"amountUnits" desc:"金额（USDC 最小单位）"`
+	DecisionHash  string `json:"decisionHash" desc:"decisionHash"`
+	State         string `json:"state" desc:"状态"`
+	ReasonCode    string `json:"reasonCode" desc:"原因码"`
+	CircleProduct string `json:"circle" desc:"Circle 产品"`
 }
 
 // NewApproval 创建完整初始化的审批。
@@ -41,7 +42,7 @@ func (own *Approval) GetHash() string {
 }
 
 // SaveApproval 插入或更新审批。
-func SaveApproval(code, requestID, category, payee, amount, decisionHash, state, reason string) error {
+func SaveApproval(code, requestID, category, payee, amount, decisionHash, state, reason, circle string) error {
 	existing, err := findApproval(code)
 	if err != nil {
 		return err
@@ -56,6 +57,7 @@ func SaveApproval(code, requestID, category, payee, amount, decisionHash, state,
 		row.DecisionHash = decisionHash
 		row.State = state
 		row.ReasonCode = reason
+		row.CircleProduct = circle
 		touchNew(row.SetID, row.SetCreatedAt, row.SetUpdatedAt, row.SetHashcode, row.GetHash(), 0)
 		return getDataAction().Insert(row)
 	}

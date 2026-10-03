@@ -39,6 +39,8 @@ func (own *Service) Routers() []types.IRouter {
 		&publicapi.Dashboard{},
 		&publicapi.RecordRevenue{},
 		&publicapi.RunOnce{},
+		&publicapi.CCTPIn{},
+		&publicapi.GatewayHook{},
 	)
 	return routers
 }

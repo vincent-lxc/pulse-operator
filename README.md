@@ -120,8 +120,18 @@ core models the admin view can list:
 scripts/operator-dry-run.sh
 ```
 
-That run pays, defers, escalates, and sweeps. It does not broadcast. Live Arc testnet
-steps, the RFB loop map, and a short screen-record script are in
+That run pays, defers, escalates, and sweeps. It does not broadcast. Every decision
+is tagged `circle:wallets`, and the sample inflows are tagged `circle:cctp` and
+`circle:gateway`. No Circle credential is required for the dry-run.
+
+| RFB step | Circle product |
+| --- | --- |
+| Execute `pay` / `sweepToReserve` | Developer-Controlled Wallets (`executor: circle-wallets`) or Agent Wallet CLI (`executor: circle-agent`) |
+| Spending limits | Agent Wallet on Arc **mainnet** only (`circle wallet limit set --chain ARC`). Testnet policies are rejected by Circle. |
+| Revenue in | CCTP v2 Iris (`circle:cctp`, Arc domain 26) and Gateway webhooks (`circle:gateway`) |
+| Fallback signer | go-ethereum raw key (`executor: raw-key`, tag `local:key`) |
+
+Live Arc testnet steps, the exact env vars, and a short screen-record script are in
 [docs/operator-agent.md](docs/operator-agent.md).
 
 ## License

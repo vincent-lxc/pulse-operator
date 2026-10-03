@@ -10,19 +10,20 @@ import (
 // DecisionRecord 是一轮循环里的一条决策。
 type DecisionRecord struct {
 	*BusinessModel
-	Code         string `gorm:"uniqueIndex" json:"code" desc:"decisionHash"`
-	RunID        string `json:"runID" desc:"运行编号"`
-	PayableCode  string `json:"payableCode" desc:"应付编号"`
-	Action       string `json:"action" desc:"动作"`
-	ReasonCode   string `json:"reasonCode" desc:"原因码"`
-	Reason       string `json:"reason" desc:"原因"`
-	CategoryCode string `json:"categoryCode" desc:"品类"`
-	Payee        string `json:"payee" desc:"收款地址"`
-	AmountUnits  string `json:"amountUnits" desc:"金额（USDC 最小单位）"`
-	TxHash       string `json:"txHash" desc:"交易哈希"`
-	Outcome      string `json:"outcome" desc:"结果"`
-	RequestID    string `json:"requestID" desc:"链上审批号"`
-	SoftNote     string `json:"softNote" desc:"软判断备注"`
+	Code          string `gorm:"uniqueIndex" json:"code" desc:"decisionHash"`
+	RunID         string `json:"runID" desc:"运行编号"`
+	PayableCode   string `json:"payableCode" desc:"应付编号"`
+	Action        string `json:"action" desc:"动作"`
+	ReasonCode    string `json:"reasonCode" desc:"原因码"`
+	Reason        string `json:"reason" desc:"原因"`
+	CategoryCode  string `json:"categoryCode" desc:"品类"`
+	Payee         string `json:"payee" desc:"收款地址"`
+	AmountUnits   string `json:"amountUnits" desc:"金额（USDC 最小单位）"`
+	TxHash        string `json:"txHash" desc:"交易哈希"`
+	Outcome       string `json:"outcome" desc:"结果"`
+	RequestID     string `json:"requestID" desc:"链上审批号"`
+	SoftNote      string `json:"softNote" desc:"软判断备注"`
+	CircleProduct string `json:"circle" desc:"Circle 产品"`
 }
 
 // NewDecisionRecord 创建完整初始化的决策。

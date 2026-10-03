@@ -19,5 +19,11 @@ categories:
 inflows:
   - tx_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     from: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    amount_usdc: "5.00"
+    amount_usdc: "4.00"
     block: 64232175
+    circle: circle:cctp
+  - tx_hash: "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    from: "0xdddddddddddddddddddddddddddddddddddddddd"
+    amount_usdc: "1.00"
+    block: 64232180
+    circle: circle:gateway

@@ -15,14 +15,16 @@ import (
 
 // LoopInput 是一轮循环的输入。LastPaid 来自上一轮持久化的冷却记录。
 type LoopInput struct {
-	Policy   Policy
-	Payables []Payable
-	Chain    Chain
-	Advisor  Advisor
-	Notifier Notifier
-	Audit    *AuditLog
-	LastPaid map[string]time.Time
-	Manual   []Inflow
+	Policy        Policy
+	Payables      []Payable
+	Chain         Chain
+	Advisor       Advisor
+	Notifier      Notifier
+	Audit         *AuditLog
+	LastPaid      map[string]time.Time
+	Manual        []Inflow
+	CircleProduct string
+	LimitNote     string
 }
 
 // Run 执行一轮。终端状态的应付（paid、escalated）不会再次提交。
@@ -46,13 +48,15 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 	}
 	snap.Balance = unitsOrZero(snap.Balance)
 	manualAdded := applyManual(&snap, in.Manual)
-	if err := auditPayload(in.Audit, runID, "observation", "", "", "", map[string]any{
-		"balance":      FormatUSDC(snap.Balance),
-		"paused":       snap.Paused,
-		"reserve":      snap.Reserve,
-		"inflows":      len(snap.Inflows),
-		"manual_added": FormatUSDC(manualAdded),
-		"block":        snap.Block,
+	if err := auditPayload(in.Audit, runID, "observation", "", "", "", in.CircleProduct, map[string]any{
+		"balance":       FormatUSDC(snap.Balance),
+		"paused":        snap.Paused,
+		"reserve":       snap.Reserve,
+		"inflows":       len(snap.Inflows),
+		"manual_added":  FormatUSDC(manualAdded),
+		"block":         snap.Block,
+		"circle":        in.CircleProduct,
+		"circle_limits": in.LimitNote,
 	}); err != nil {
 		return Report{}, err
 	}
@@ -78,7 +82,7 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 		return open[i].Due.Before(open[j].Due)
 	})
 	pre := Assess(snap.Balance, sumDue(open, in.Policy, obligated), in.Policy.ReserveFloor, in.Policy.ReserveTarget)
-	if err := auditPayload(in.Audit, runID, "liquidity", "", "", "", map[string]any{
+	if err := auditPayload(in.Audit, runID, "liquidity", "", "", "", in.CircleProduct, map[string]any{
 		"balance":        FormatUSDC(pre.Balance),
 		"obligations":    FormatUSDC(pre.Obligations),
 		"reserve_floor":  FormatUSDC(pre.ReserveFloor),
@@ -105,6 +109,7 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 			return Report{}, err
 		}
 		d.DecisionHash = hash
+		d.Product = in.CircleProduct
 		if d.Submit {
 			callHash, err := Hash32(hash)
 			if err != nil {
@@ -128,7 +133,10 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 				d.TxHash = res.TxHash
 				d.RequestID = res.RequestID
 				d.Calldata = res.Calldata
-				if res.Status == "simulated_paid" || res.Status == "paid" {
+				if res.Product != "" {
+					d.Product = res.Product
+				}
+				if res.Status == "simulated_paid" || res.Status == "paid" || res.Status == "circle_confirmed" {
 					ApplyPay(&snap, d.Category, d.Amount)
 					lastPaid[d.Payee] = in.Policy.Now
 				}
@@ -168,6 +176,7 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 		return Report{}, err
 	}
 	sweep.DecisionHash = hash
+	sweep.Product = in.CircleProduct
 	if sweep.Action == ActionSweep {
 		callHash, err := Hash32(hash)
 		if err != nil {
@@ -185,6 +194,9 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 			sweep.Outcome = res.Status
 			sweep.TxHash = res.TxHash
 			sweep.Calldata = res.Calldata
+			if res.Product != "" {
+				sweep.Product = res.Product
+			}
 			if res.Status == "simulated_swept" || res.Status == "swept" {
 				ApplySweep(&snap, sweep.Amount)
 			}
@@ -258,17 +270,18 @@ func seal(policy Policy, d Decision) (string, error) {
 }
 
 func writeDecision(log *AuditLog, runID string, d Decision) error {
-	if err := auditPayload(log, runID, "decision", d.DecisionHash, "", "", d); err != nil {
+	if err := auditPayload(log, runID, "decision", d.DecisionHash, "", "", d.Product, d); err != nil {
 		return err
 	}
-	return auditPayload(log, runID, "execution", d.DecisionHash, d.TxHash, d.Outcome, map[string]any{
+	return auditPayload(log, runID, "execution", d.DecisionHash, d.TxHash, d.Outcome, d.Product, map[string]any{
 		"action":     d.Action,
 		"payable_id": d.PayableID,
 		"request_id": d.RequestID,
+		"circle":     d.Product,
 	})
 }
 
-func auditPayload(log *AuditLog, runID, kind, decisionHash, txHash, outcome string, payload any) error {
+func auditPayload(log *AuditLog, runID, kind, decisionHash, txHash, outcome, circle string, payload any) error {
 	if log == nil {
 		return nil
 	}
@@ -282,6 +295,7 @@ func auditPayload(log *AuditLog, runID, kind, decisionHash, txHash, outcome stri
 		DecisionHash: decisionHash,
 		TxHash:       txHash,
 		Outcome:      outcome,
+		Circle:       circle,
 		Payload:      b,
 	})
 }

@@ -84,6 +84,12 @@ func Run(ctx context.Context, cfg treasury.Config) (treasury.Report, error) {
 	if err != nil {
 		return treasury.Report{}, err
 	}
+	confirmed, confirmedCodes, err := confirmCCTP(ctx, cfg)
+	if err != nil {
+		return treasury.Report{}, err
+	}
+	manual = append(manual, confirmed...)
+	manualCodes = append(manualCodes, confirmedCodes...)
 	chain, closeChain, err := openChain(ctx, cfg, payables)
 	if err != nil {
 		return treasury.Report{}, err
@@ -93,15 +99,21 @@ func Run(ctx context.Context, cfg treasury.Config) (treasury.Report, error) {
 	if err != nil {
 		return treasury.Report{}, err
 	}
+	_, limitNote := treasury.SpendingLimits(cfg.Circle.Blockchain)
+	if cfg.Executor != "circle-agent" {
+		limitNote = "developer-controlled wallets and raw keys do not use Circle agent spending policies; those policies are mainnet agent wallets only"
+	}
 	report, err := treasury.Run(ctx, treasury.LoopInput{
-		Policy:   policy,
-		Payables: payables,
-		Chain:    chain,
-		Advisor:  advisor(cfg),
-		Notifier: notifier(cfg),
-		Audit:    audit,
-		LastPaid: lastPaid,
-		Manual:   manual,
+		Policy:        policy,
+		Payables:      payables,
+		Chain:         chain,
+		Advisor:       advisor(cfg),
+		Notifier:      notifier(cfg),
+		Audit:         audit,
+		LastPaid:      lastPaid,
+		Manual:        manual,
+		CircleProduct: cfg.ExecutorProduct(),
+		LimitNote:     limitNote,
 	})
 	if err != nil {
 		return treasury.Report{}, err
@@ -163,7 +175,68 @@ func openChain(ctx context.Context, cfg treasury.Config, payables []treasury.Pay
 	if err != nil {
 		return nil, nil, err
 	}
-	return client, client.Close, nil
+	return routeExecutor(cfg, client, client.Close)
+}
+
+func routeExecutor(cfg treasury.Config, base treasury.Chain, closeFn func()) (treasury.Chain, func(), error) {
+	product := cfg.ExecutorProduct()
+	if cfg.Mode != "live" || cfg.Executor == "raw-key" || cfg.Executor == "" {
+		return treasury.TagChain(base, product), closeFn, nil
+	}
+	gas := treasury.WeiString(cfg.Gas.MaxFeePerGasGwei)
+	priority := treasury.WeiString(cfg.Gas.MaxPriorityFeePerGasGwei)
+	switch cfg.Executor {
+	case "circle-wallets":
+		client, err := walletsClient(cfg)
+		if err != nil {
+			closeFn()
+			return nil, nil, err
+		}
+		payWallet, err := treasury.LoadSecret(cfg.Circle.WalletIDEnv, cfg.Circle.WalletIDFile)
+		if err != nil {
+			closeFn()
+			return nil, nil, err
+		}
+		ownerWallet, err := treasury.LoadSecret(cfg.Circle.OwnerWalletIDEnv, cfg.Circle.OwnerWalletIDFile)
+		if err != nil {
+			closeFn()
+			return nil, nil, err
+		}
+		return treasury.NewWalletsChain(base, client, cfg.Vault, cfg.Circle.Blockchain, payWallet, ownerWallet, gas, priority), closeFn, nil
+	case "circle-agent":
+		payAddress, err := treasury.LoadSecret(cfg.Circle.AgentAddressEnv, "")
+		if err != nil {
+			closeFn()
+			return nil, nil, err
+		}
+		ownerAddress, err := treasury.LoadSecret(cfg.Circle.OwnerAddressEnv, "")
+		if err != nil {
+			closeFn()
+			return nil, nil, err
+		}
+		return treasury.NewAgentChain(base, nil, cfg.Circle.CLI, cfg.Vault, cfg.Circle.Blockchain, payAddress, ownerAddress), closeFn, nil
+	default:
+		return treasury.TagChain(base, product), closeFn, nil
+	}
+}
+
+func walletsClient(cfg treasury.Config) (*treasury.WalletsClient, error) {
+	apiKey, err := treasury.LoadSecret(cfg.Circle.APIKeyEnv, cfg.Circle.APIKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	secretRaw, err := treasury.LoadSecret(cfg.Circle.EntitySecretEnv, cfg.Circle.EntitySecretFile)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey == "" || secretRaw == "" {
+		return nil, fmt.Errorf("circle wallets live mode needs %s and %s", cfg.Circle.APIKeyEnv, cfg.Circle.EntitySecretEnv)
+	}
+	secret, err := treasury.ParseEntitySecret(secretRaw)
+	if err != nil {
+		return nil, err
+	}
+	return &treasury.WalletsClient{BaseURL: cfg.Circle.APIBase, APIKey: apiKey, EntitySecret: secret}, nil
 }
 
 func advisor(cfg treasury.Config) treasury.Advisor {
@@ -220,18 +293,23 @@ func unreconciledManual() ([]treasury.Inflow, []string, error) {
 	var inflows []treasury.Inflow
 	var codes []string
 	for _, row := range rows {
-		if row.Source != "http" || row.Reconciled {
+		if row.Reconciled || (row.Source != "http" && row.CircleProduct != treasury.ProductCCTP && row.CircleProduct != treasury.ProductGateway && row.Source != treasury.ProductCCTP && row.Source != treasury.ProductGateway) {
 			continue
 		}
 		amount, err := treasury.ParseUSDC(trimUnits(row.AmountUnits))
 		if err != nil {
 			return nil, nil, err
 		}
+		product := row.CircleProduct
+		if product == "" && row.Source == "http" {
+			product = treasury.ProductLocalHTTP
+		}
 		inflows = append(inflows, treasury.Inflow{
-			TxHash: row.Ref,
-			From:   row.FromAddress,
-			Amount: amount,
-			Source: "http",
+			TxHash:  row.Ref,
+			From:    row.FromAddress,
+			Amount:  amount,
+			Source:  row.Source,
+			Product: product,
 		})
 		codes = append(codes, row.Code)
 	}
@@ -253,13 +331,28 @@ func persist(report treasury.Report, manualCodes []string) error {
 			}
 		}
 	}
+	pending := map[string]bool{}
+	for _, code := range manualCodes {
+		pending[code] = true
+	}
 	for _, in := range report.Inflows {
 		source := in.Source
 		if source == "" {
 			source = "chain"
 		}
-		if _, err := models.InsertRevenue(source, in.TxHash, in.From, treasury.FormatUSDC(in.Amount), report.ObservedAt.Format(time.RFC3339), ""); err != nil {
+		product := in.Product
+		if product == "" {
+			product = source
+		}
+		row, err := models.InsertRevenue(source, in.TxHash, in.From, treasury.FormatUSDC(in.Amount), report.ObservedAt.Format(time.RFC3339), "", product)
+		if err != nil {
 			return err
+		}
+		// 快照里的流入已经包含在余额中。未对账的手工、CCTP、Gateway 记录由 manualCodes 稍后标记。
+		if row != nil && !pending[row.Code] {
+			if err := models.MarkRevenueReconciled(row.Code); err != nil {
+				return err
+			}
 		}
 	}
 	for _, code := range manualCodes {
@@ -283,6 +376,7 @@ func persist(report treasury.Report, manualCodes []string) error {
 		row.Outcome = d.Outcome
 		row.RequestID = d.RequestID
 		row.SoftNote = d.SoftNote
+		row.CircleProduct = d.Product
 		if err := models.InsertDecision(row); err != nil {
 			return err
 		}
@@ -302,7 +396,7 @@ func persist(report treasury.Report, manualCodes []string) error {
 			if req == "" {
 				req = "local"
 			}
-			if err := models.SaveApproval(code, req, d.Category, d.Payee, amount, d.DecisionHash, "pending", d.ReasonCode); err != nil {
+			if err := models.SaveApproval(code, req, d.Category, d.Payee, amount, d.DecisionHash, "pending", d.ReasonCode, d.Product); err != nil {
 				return err
 			}
 		}
@@ -315,13 +409,23 @@ func persist(report treasury.Report, manualCodes []string) error {
 	cycle.ReserveTargetUnits = treasury.FormatUSDC(report.Liquidity.ReserveTarget)
 	cycle.SurplusUnits = treasury.FormatUSDC(report.Liquidity.Surplus)
 	cycle.ObservedAt = report.ObservedAt.Format(time.RFC3339)
+	cycle.CircleProduct = cfgProduct(report)
 	return models.InsertCycle(cycle)
+}
+
+func cfgProduct(report treasury.Report) string {
+	for _, d := range report.Decisions {
+		if d.Product != "" {
+			return d.Product
+		}
+	}
+	return ""
 }
 
 func payableState(d treasury.Decision) string {
 	switch d.Action {
 	case treasury.ActionPay:
-		if d.Outcome == "simulated_paid" || d.Outcome == "paid" || d.Outcome == "dry_run_paid" {
+		if d.Outcome == "simulated_paid" || d.Outcome == "paid" || d.Outcome == "dry_run_paid" || d.Outcome == "circle_confirmed" {
 			return "paid"
 		}
 	case treasury.ActionDefer:

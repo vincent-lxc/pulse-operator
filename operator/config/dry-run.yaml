@@ -30,3 +30,20 @@ secrets:
 gas:
   maxFeePerGasGwei: 50
   maxPriorityFeePerGasGwei: 2
+# Dry-run tags decisions as Circle Wallets and does not call Circle.
+# Live mode with the same executor sends pay through the Wallets API.
+executor: circle-wallets
+circle:
+  blockchain: ARC-TESTNET
+  apiBase: https://api.circle.com
+  irisBase: https://iris-api-sandbox.circle.com
+  cli: circle
+  apiKeyEnv: CIRCLE_API_KEY
+  entitySecretEnv: CIRCLE_ENTITY_SECRET
+  walletIDEnv: CIRCLE_WALLET_ID
+  ownerWalletIDEnv: CIRCLE_OWNER_WALLET_ID
+  agentAddressEnv: CIRCLE_AGENT_ADDRESS
+  ownerAddressEnv: CIRCLE_OWNER_ADDRESS
+  cctp:
+    enabled: true
+    burns: []

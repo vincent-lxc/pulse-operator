@@ -29,6 +29,8 @@ type ExecResult struct {
 	TxHash    string
 	RequestID string
 	Calldata  string
+	// Product 是处理这笔执行的 Circle 产品标签，例如 circle:wallets。
+	Product string
 }
 
 // Chain 读取金库并可选地提交交易。

@@ -59,6 +59,12 @@ func TestRunSampleLedgerPersistsDecisions(t *testing.T) {
 	if view.Balance == "" || len(view.Approvals) == 0 || len(view.Revenues) == 0 {
 		t.Fatalf("dashboard %+v", view)
 	}
+	if view.CircleProduct != treasury.ProductWallets || !contains(text, "circle=circle:wallets") || !contains(text, "circle=circle:cctp") || !contains(text, "circle=circle:gateway") {
+		t.Fatalf("circle tags missing in dashboard %+v\n%s", view.CircleProduct, text)
+	}
+	if view.Approvals[0].CircleProduct != treasury.ProductWallets {
+		t.Fatalf("approval circle %+v", view.Approvals[0])
+	}
 	if err := RecordRevenue("manual-1", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "1.00", "wire"); err != nil {
 		t.Fatal(err)
 	}

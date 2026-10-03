@@ -14,7 +14,7 @@ func WriteReport(out io.Writer, report treasury.Report) error {
 		return err
 	}
 	for _, in := range report.Inflows {
-		if _, err := fmt.Fprintf(out, "revenue source=%s amount=%s from=%s ref=%s\n", in.Source, treasury.FormatUSDC(in.Amount), in.From, in.TxHash); err != nil {
+		if _, err := fmt.Fprintf(out, "revenue source=%s circle=%s amount=%s from=%s ref=%s\n", in.Source, in.Product, treasury.FormatUSDC(in.Amount), in.From, in.TxHash); err != nil {
 			return err
 		}
 	}
@@ -24,8 +24,8 @@ func WriteReport(out io.Writer, report treasury.Report) error {
 		return err
 	}
 	for _, d := range report.Decisions {
-		if _, err := fmt.Fprintf(out, "decision action=%s payable=%s amount=%s reason=%s outcome=%s hash=%s tx=%s\n",
-			d.Action, d.PayableID, treasury.FormatUSDC(d.Amount), d.ReasonCode, d.Outcome, d.DecisionHash, d.TxHash); err != nil {
+		if _, err := fmt.Fprintf(out, "decision action=%s payable=%s amount=%s reason=%s outcome=%s circle=%s hash=%s tx=%s\n",
+			d.Action, d.PayableID, treasury.FormatUSDC(d.Amount), d.ReasonCode, d.Outcome, d.Product, d.DecisionHash, d.TxHash); err != nil {
 			return err
 		}
 	}

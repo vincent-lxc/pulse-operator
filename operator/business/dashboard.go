@@ -7,13 +7,14 @@ import (
 
 // Dashboard 是管理界面之外的只读 JSON 视图。
 type Dashboard struct {
-	Balance     string         `json:"balance"`
-	Obligations string         `json:"obligations"`
-	Surplus     string         `json:"surplus"`
-	Categories  []CategoryView `json:"categories"`
-	Decisions   []DecisionView `json:"decisions"`
-	Approvals   []ApprovalView `json:"approvals"`
-	Revenues    []RevenueView  `json:"revenues"`
+	Balance       string         `json:"balance"`
+	Obligations   string         `json:"obligations"`
+	Surplus       string         `json:"surplus"`
+	CircleProduct string         `json:"circle"`
+	Categories    []CategoryView `json:"categories"`
+	Decisions     []DecisionView `json:"decisions"`
+	Approvals     []ApprovalView `json:"approvals"`
+	Revenues      []RevenueView  `json:"revenues"`
 }
 
 // CategoryView 是品类预算的公开字段。
@@ -27,31 +28,34 @@ type CategoryView struct {
 
 // DecisionView 是最近决策的公开字段。
 type DecisionView struct {
-	Action     string `json:"action"`
-	Payable    string `json:"payable"`
-	Amount     string `json:"amount"`
-	ReasonCode string `json:"reasonCode"`
-	Outcome    string `json:"outcome"`
-	Hash       string `json:"hash"`
-	TxHash     string `json:"txHash"`
+	Action        string `json:"action"`
+	Payable       string `json:"payable"`
+	Amount        string `json:"amount"`
+	ReasonCode    string `json:"reasonCode"`
+	Outcome       string `json:"outcome"`
+	Hash          string `json:"hash"`
+	TxHash        string `json:"txHash"`
+	CircleProduct string `json:"circle"`
 }
 
 // ApprovalView 是待人工处理的公开字段。
 type ApprovalView struct {
-	RequestID string `json:"requestID"`
-	Category  string `json:"category"`
-	Payee     string `json:"payee"`
-	Amount    string `json:"amount"`
-	State     string `json:"state"`
-	Reason    string `json:"reason"`
+	RequestID     string `json:"requestID"`
+	Category      string `json:"category"`
+	Payee         string `json:"payee"`
+	Amount        string `json:"amount"`
+	State         string `json:"state"`
+	Reason        string `json:"reason"`
+	CircleProduct string `json:"circle"`
 }
 
 // RevenueView 是收入观察的公开字段。
 type RevenueView struct {
-	Source string `json:"source"`
-	Ref    string `json:"ref"`
-	Amount string `json:"amount"`
-	From   string `json:"from"`
+	Source        string `json:"source"`
+	Ref           string `json:"ref"`
+	Amount        string `json:"amount"`
+	From          string `json:"from"`
+	CircleProduct string `json:"circle"`
 }
 
 // LoadDashboard 从已落库的模型组装看板。
@@ -66,6 +70,7 @@ func LoadDashboard() (Dashboard, error) {
 		view.Balance = last.BalanceUnits
 		view.Obligations = last.ObligationUnits
 		view.Surplus = last.SurplusUnits
+		view.CircleProduct = last.CircleProduct
 	}
 	cats, err := models.ListSpendCategories()
 	if err != nil {
@@ -82,7 +87,7 @@ func LoadDashboard() (Dashboard, error) {
 	}
 	for _, d := range decisions {
 		view.Decisions = append(view.Decisions, DecisionView{
-			Action: d.Action, Payable: d.PayableCode, Amount: d.AmountUnits, ReasonCode: d.ReasonCode, Outcome: d.Outcome, Hash: d.Code, TxHash: d.TxHash,
+			Action: d.Action, Payable: d.PayableCode, Amount: d.AmountUnits, ReasonCode: d.ReasonCode, Outcome: d.Outcome, Hash: d.Code, TxHash: d.TxHash, CircleProduct: d.CircleProduct,
 		})
 	}
 	approvals, err := models.ListApprovals()
@@ -94,7 +99,7 @@ func LoadDashboard() (Dashboard, error) {
 			continue
 		}
 		view.Approvals = append(view.Approvals, ApprovalView{
-			RequestID: a.RequestID, Category: a.CategoryCode, Payee: a.Payee, Amount: a.AmountUnits, State: a.State, Reason: a.ReasonCode,
+			RequestID: a.RequestID, Category: a.CategoryCode, Payee: a.Payee, Amount: a.AmountUnits, State: a.State, Reason: a.ReasonCode, CircleProduct: a.CircleProduct,
 		})
 	}
 	revenues, err := models.ListRevenues()
@@ -102,7 +107,7 @@ func LoadDashboard() (Dashboard, error) {
 		return view, err
 	}
 	for _, r := range revenues {
-		view.Revenues = append(view.Revenues, RevenueView{Source: r.Source, Ref: r.Ref, Amount: r.AmountUnits, From: r.FromAddress})
+		view.Revenues = append(view.Revenues, RevenueView{Source: r.Source, Ref: r.Ref, Amount: r.AmountUnits, From: r.FromAddress, CircleProduct: r.CircleProduct})
 	}
 	return view, nil
 }
@@ -113,6 +118,6 @@ func RecordRevenue(ref, from, amountUSDC, memo string) error {
 	if err != nil {
 		return err
 	}
-	_, err = models.InsertRevenue("http", ref, from, amount, "", memo)
+	_, err = models.InsertRevenue("http", ref, from, amount, "", memo, "local:http")
 	return err
 }

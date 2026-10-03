@@ -488,6 +488,23 @@ func approvalFromABI(id string, value interface{}) (Approval, error) {
 	}, nil
 }
 
+// ExplainPay 读取已广播交易的回执，区分直接支付和待审批。
+func (c *LiveChain) ExplainPay(ctx context.Context, txHash string, decision common.Hash) (string, string, error) {
+	hash := common.HexToHash(txHash)
+	receipt, err := c.wait(ctx, hash)
+	if err != nil {
+		return "", "", err
+	}
+	paid, id, ok := decodePayReceipt(receipt, decision)
+	if !ok {
+		return "", "", fmt.Errorf("receipt %s had no pay event", hash.Hex())
+	}
+	if paid {
+		return "paid", "", nil
+	}
+	return "approval_requested", id, nil
+}
+
 func decodePayReceipt(receipt *types.Receipt, decision common.Hash) (bool, string, bool) {
 	for _, lg := range receipt.Logs {
 		if lg == nil || len(lg.Topics) == 0 {
