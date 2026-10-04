@@ -114,17 +114,17 @@ func TestSaveApprovalWritesCircleOnUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	const code = "approval-circle-update"
-	if err := models.SaveApproval(code, "9", "people", "0x2222222222222222222222222222222222222222", "3.000000", "0xabc", "pending", "over_tx_cap", ""); err != nil {
+	if err := models.SaveApproval(code, "9", "people", "0x2222222222222222222222222222222222222222", "3.000000", "0xabc", "pending", "over_tx_cap", "", "tx-1", "COMPLETE"); err != nil {
 		t.Fatal(err)
 	}
-	if err := models.SaveApproval(code, "9", "people", "0x2222222222222222222222222222222222222222", "3.000000", "0xabc", "simulated_approved", "over_tx_cap", treasury.ProductWallets); err != nil {
+	if err := models.SaveApproval(code, "9", "people", "0x2222222222222222222222222222222222222222", "3.000000", "0xabc", "simulated_approved", "over_tx_cap", treasury.ProductWallets, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	row, err := models.FindApprovalByRequest("9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row == nil || row.State != "simulated_approved" || row.CircleProduct != treasury.ProductWallets {
+	if row == nil || row.State != "simulated_approved" || row.CircleProduct != treasury.ProductWallets || row.CircleTxID != "tx-1" || row.CircleState != "COMPLETE" {
 		t.Fatalf("circle not stored on update: %+v", row)
 	}
 }

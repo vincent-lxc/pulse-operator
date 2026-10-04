@@ -60,9 +60,11 @@ func (c agentChain) Pay(ctx context.Context, call PayCall) (ExecResult, error) {
 	}
 	tx, err := c.execute(ctx, c.payAddress, "pay(bytes32,address,uint256,bytes32)", params)
 	if err != nil {
-		return ExecResult{Product: ProductAgent}, err
+		return circleFail(ctx, c.observe, tx, PackPayData(call), false, ProductAgent, err)
 	}
-	return explain(ctx, c.observe, tx, call.DecisionHash, ProductAgent, false), nil
+	got := explain(ctx, c.observe, tx, call.DecisionHash, ProductAgent, false)
+	got.Product = ProductAgent
+	return got, nil
 }
 
 func (c agentChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, error) {
@@ -71,9 +73,12 @@ func (c agentChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, erro
 	}
 	tx, err := c.execute(ctx, c.owner, "sweepToReserve(uint256,bytes32)", SweepArguments(call))
 	if err != nil {
-		return ExecResult{Product: ProductAgent}, err
+		data, _ := PackSweep(call.Amount, call.DecisionHash)
+		return circleFail(ctx, c.observe, tx, data, true, ProductAgent, err)
 	}
-	return explain(ctx, c.observe, tx, call.DecisionHash, ProductAgent, true), nil
+	got := explain(ctx, c.observe, tx, call.DecisionHash, ProductAgent, true)
+	got.Product = ProductAgent
+	return got, nil
 }
 
 // Approve 用 owner 地址调用 circle wallet execute approve。
@@ -95,49 +100,71 @@ func (c agentChain) ownerExecute(ctx context.Context, requestID, signature, stat
 	}
 	tx, err := c.execute(ctx, c.owner, signature, []string{strings.TrimSpace(requestID)})
 	if err != nil {
-		return ExecResult{Product: ProductAgent}, err
+		data, packErr := packOwner(strings.TrimSuffix(signature, "(uint256)"), requestID)
+		if packErr != nil {
+			return ExecResult{Product: ProductAgent, CircleTxID: tx.ID, CircleState: tx.State}, err
+		}
+		return circleFail(ctx, c.observe, tx, data, true, ProductAgent, err)
 	}
-	return ExecResult{Status: status, TxHash: tx, RequestID: strings.TrimSpace(requestID), Product: ProductAgent}, nil
+	return ExecResult{Status: status, TxHash: tx.TxHash, RequestID: strings.TrimSpace(requestID), Product: ProductAgent, CircleTxID: tx.ID, CircleState: tx.State}, nil
 }
 
-func (c agentChain) execute(ctx context.Context, from, signature string, params []string) (string, error) {
+func (c agentChain) ListPending(ctx context.Context) ([]Approval, error) {
+	src, ok := c.observe.(PendingSource)
+	if !ok {
+		return nil, nil
+	}
+	return src.ListPending(ctx)
+}
+
+func (c agentChain) execute(ctx context.Context, from, signature string, params []string) (circleTx, error) {
 	args := []string{"wallet", "execute", signature}
 	args = append(args, params...)
 	args = append(args, "--contract", c.vault, "--address", from, "--chain", c.blockchain, "--output", "json")
 	out, err := c.run(ctx, c.cli, args)
-	hash := txHashFromOutput(out)
+	tx := txFromOutput(out)
 	if err != nil {
-		if hash == "" {
-			return "", fmt.Errorf("circle CLI: %w: %s", err, strings.TrimSpace(string(out)))
+		if tx.TxHash == "" && tx.ID == "" {
+			return tx, fmt.Errorf("circle CLI: %w: %s", err, strings.TrimSpace(string(out)))
 		}
+		return tx, fmt.Errorf("circle CLI: %w", err)
 	}
-	if hash == "" {
-		return "", fmt.Errorf("circle CLI returned no transaction hash: %s", strings.TrimSpace(string(out)))
+	if tx.TxHash == "" {
+		return tx, fmt.Errorf("circle CLI returned no transaction hash: %s", strings.TrimSpace(string(out)))
 	}
-	return hash, nil
+	return tx, nil
 }
 
 var txHashPattern = regexp.MustCompile(`0x[0-9a-fA-F]{64}`)
 
-func txHashFromOutput(out []byte) string {
+func txFromOutput(out []byte) circleTx {
 	var body struct {
+		ID              string `json:"id"`
+		State           string `json:"state"`
 		TxHash          string `json:"txHash"`
 		TransactionHash string `json:"transactionHash"`
 		Data            struct {
+			ID              string `json:"id"`
+			State           string `json:"state"`
 			TxHash          string `json:"txHash"`
 			TransactionHash string `json:"transactionHash"`
 		} `json:"data"`
 	}
+	tx := circleTx{}
 	if json.Unmarshal(out, &body) == nil {
+		tx.ID = firstNonEmpty(body.Data.ID, body.ID)
+		tx.State = firstNonEmpty(body.Data.State, body.State)
 		for _, candidate := range []string{body.TxHash, body.TransactionHash, body.Data.TxHash, body.Data.TransactionHash} {
 			if txHashPattern.MatchString(candidate) {
-				return common.HexToHash(candidate).Hex()
+				tx.TxHash = common.HexToHash(candidate).Hex()
+				break
 			}
 		}
 	}
-	found := txHashPattern.Find(out)
-	if found == nil {
-		return ""
+	if tx.TxHash == "" {
+		if found := txHashPattern.Find(out); found != nil {
+			tx.TxHash = common.HexToHash(string(found)).Hex()
+		}
 	}
-	return common.HexToHash(string(found)).Hex()
+	return tx
 }

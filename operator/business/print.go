@@ -31,8 +31,15 @@ func WriteReport(out io.Writer, report treasury.Report) error {
 		return err
 	}
 	for _, d := range report.Decisions {
-		if _, err := fmt.Fprintf(out, "decision action=%s payable=%s amount=%s reason=%s outcome=%s circle=%s hash=%s tx=%s\n",
-			d.Action, d.PayableID, treasury.FormatUSDC(d.Amount), d.ReasonCode, d.Outcome, d.Product, d.DecisionHash, d.TxHash); err != nil {
+		line := fmt.Sprintf("decision action=%s payable=%s amount=%s reason=%s outcome=%s circle=%s hash=%s tx=%s",
+			d.Action, d.PayableID, treasury.FormatUSDC(d.Amount), d.ReasonCode, d.Outcome, d.Product, d.DecisionHash, d.TxHash)
+		if d.CircleTxID != "" {
+			line += " circle_tx=" + d.CircleTxID
+		}
+		if d.CircleState != "" {
+			line += " circle_state=" + d.CircleState
+		}
+		if _, err := fmt.Fprintf(out, "%s\n", line); err != nil {
 			return err
 		}
 	}

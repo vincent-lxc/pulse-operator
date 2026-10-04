@@ -430,6 +430,8 @@ func persist(cfg treasury.Config, report treasury.Report, manualCodes []string) 
 		row.RequestID = d.RequestID
 		row.SoftNote = d.SoftNote
 		row.CircleProduct = d.Product
+		row.CircleTxID = d.CircleTxID
+		row.CircleState = d.CircleState
 		if err := models.InsertDecision(row); err != nil {
 			return err
 		}
@@ -449,10 +451,13 @@ func persist(cfg treasury.Config, report treasury.Report, manualCodes []string) 
 			if req == "" {
 				req = "local"
 			}
-			if err := models.SaveApproval(code, req, d.Category, d.Payee, amount, d.DecisionHash, "pending", d.ReasonCode, d.Product); err != nil {
+			if err := models.SaveApproval(code, req, d.Category, d.Payee, amount, d.DecisionHash, "pending", d.ReasonCode, d.Product, d.CircleTxID, d.CircleState); err != nil {
 				return err
 			}
 		}
+	}
+	if err := SyncChainApprovals(report.Pending); err != nil {
+		return err
 	}
 	cycle := models.NewCycleSnapshot()
 	cycle.Code = report.RunID

@@ -50,7 +50,10 @@ func settle(requestID, action string) (*dto.ApprovalActionResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &dto.ApprovalActionResponse{RequestID: res.RequestID, Status: res.Status, TxHash: res.TxHash, Circle: res.Circle}, nil
+	return &dto.ApprovalActionResponse{
+		RequestID: res.RequestID, Status: res.Status, TxHash: res.TxHash, Circle: res.Circle,
+		CircleTxID: res.CircleTxID, CircleState: res.CircleState,
+	}, nil
 }
 
 func bindRequestID(req servertypes.IRequest, dest *string) error {

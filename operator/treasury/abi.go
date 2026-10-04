@@ -18,6 +18,7 @@ const vaultABIJSON = `[
  {"type":"function","name":"balance","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"uint256"}]},
  {"type":"function","name":"paused","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"bool"}]},
  {"type":"function","name":"reserve","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"address"}]},
+ {"type":"function","name":"owner","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"address"}]},
  {"type":"function","name":"getCategory","stateMutability":"view","inputs":[{"name":"category","type":"bytes32"}],"outputs":[{"name":"v","type":"tuple","components":[{"name":"enabled","type":"bool"},{"name":"budget","type":"uint256"},{"name":"perTxCap","type":"uint256"},{"name":"period","type":"uint64"},{"name":"epoch","type":"uint64"},{"name":"epochStart","type":"uint64"},{"name":"epochEnd","type":"uint64"},{"name":"spent","type":"uint256"},{"name":"autoSpent","type":"uint256"},{"name":"approvedSpent","type":"uint256"},{"name":"remaining","type":"uint256"}]}]},
  {"type":"function","name":"isPayeeAllowed","stateMutability":"view","inputs":[{"name":"category","type":"bytes32"},{"name":"payee","type":"address"}],"outputs":[{"name":"","type":"bool"}]},
  {"type":"function","name":"pendingRequestIds","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"uint256[]"}]},
@@ -25,7 +26,23 @@ const vaultABIJSON = `[
  {"type":"function","name":"decisionUsed","stateMutability":"view","inputs":[{"name":"decisionHash","type":"bytes32"}],"outputs":[{"name":"","type":"bool"}]},
  {"type":"event","name":"AgentPaid","inputs":[{"name":"category","type":"bytes32","indexed":true},{"name":"payee","type":"address","indexed":true},{"name":"amount","type":"uint256"},{"name":"epoch","type":"uint64"},{"name":"decisionHash","type":"bytes32","indexed":true}]},
  {"type":"event","name":"ApprovalRequested","inputs":[{"name":"requestId","type":"uint256","indexed":true},{"name":"category","type":"bytes32","indexed":true},{"name":"payee","type":"address","indexed":true},{"name":"amount","type":"uint256"},{"name":"reason","type":"uint8"},{"name":"decisionHash","type":"bytes32"}]},
- {"type":"event","name":"SweptToReserve","inputs":[{"name":"reserve","type":"address","indexed":true},{"name":"amount","type":"uint256"},{"name":"decisionHash","type":"bytes32","indexed":true}]}
+ {"type":"event","name":"SweptToReserve","inputs":[{"name":"reserve","type":"address","indexed":true},{"name":"amount","type":"uint256"},{"name":"decisionHash","type":"bytes32","indexed":true}]},
+ {"type":"error","name":"NotOwner","inputs":[]},
+ {"type":"error","name":"NotAgent","inputs":[]},
+ {"type":"error","name":"NotPendingOwner","inputs":[]},
+ {"type":"error","name":"IsPaused","inputs":[]},
+ {"type":"error","name":"ZeroAddress","inputs":[]},
+ {"type":"error","name":"ZeroAmount","inputs":[]},
+ {"type":"error","name":"ZeroDecisionHash","inputs":[]},
+ {"type":"error","name":"ZeroPeriod","inputs":[]},
+ {"type":"error","name":"DecisionAlreadyUsed","inputs":[{"name":"decisionHash","type":"bytes32"}]},
+ {"type":"error","name":"UnknownCategory","inputs":[{"name":"category","type":"bytes32"}]},
+ {"type":"error","name":"PayeeNotAllowed","inputs":[{"name":"category","type":"bytes32"},{"name":"payee","type":"address"}]},
+ {"type":"error","name":"OverLimit","inputs":[{"name":"reason","type":"uint8"},{"name":"amount","type":"uint256"},{"name":"perTxCap","type":"uint256"},{"name":"remaining","type":"uint256"}]},
+ {"type":"error","name":"RequestNotPending","inputs":[{"name":"requestId","type":"uint256"}]},
+ {"type":"error","name":"InsufficientBalance","inputs":[{"name":"balance","type":"uint256"},{"name":"needed","type":"uint256"}]},
+ {"type":"error","name":"TransferFailed","inputs":[]},
+ {"type":"error","name":"Reentrancy","inputs":[]}
 ]`
 
 var contractABI = mustContractABI()

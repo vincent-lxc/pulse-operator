@@ -152,6 +152,36 @@ func TestMaxSpendPerRunDefers(t *testing.T) {
 	}
 }
 
+func TestSettledPayablesDropOutOfObligations(t *testing.T) {
+	payee := NormalizeAddress("0x2222222222222222222222222222222222222222")
+	policy := Policy{
+		AgentID: "pulse-operator", ChainID: "5042002", Vault: "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01",
+		ReserveFloor: big.NewInt(8_000000), ReserveTarget: big.NewInt(10_000000),
+		Horizon: 168 * time.Hour, Now: time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC),
+	}
+	due := policy.Now.Add(-time.Hour)
+	report, err := Run(context.Background(), LoopInput{
+		Policy: policy,
+		Payables: []Payable{
+			{ID: "done", Category: "infra", Payee: payee, Amount: big.NewInt(5_000000), Due: due, Status: "paid"},
+			{ID: "shut", Category: "infra", Payee: payee, Amount: big.NewInt(1_000000), Due: due, Status: "closed"},
+			{ID: "wait", Category: "people", Payee: payee, Amount: big.NewInt(700000), Due: due, Status: "escalated"},
+		},
+		Chain: NewMockChain(Snapshot{Balance: big.NewInt(20_000000), Reserve: "0x1111111111111111111111111111111111111111"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if FormatUSDC(report.OpeningLiquidity.Obligations) != "0.700000" {
+		t.Fatalf("obligations %s", FormatUSDC(report.OpeningLiquidity.Obligations))
+	}
+	for _, d := range report.Decisions {
+		if d.PayableID == "done" || d.PayableID == "shut" || d.PayableID == "wait" {
+			t.Fatalf("settled or escalated payable was decided again: %+v", d)
+		}
+	}
+}
+
 type statusChain struct {
 	snap      Snapshot
 	payStatus string

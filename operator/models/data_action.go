@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/digitalwayhk/core/pkg/persistence/database/oltp"
 	"github.com/digitalwayhk/core/pkg/persistence/entity"
 	persistencetypes "github.com/digitalwayhk/core/pkg/persistence/types"
 )
@@ -55,5 +56,25 @@ func EnsureStorage() error {
 			return err
 		}
 	}
-	return nil
+	return migrateStorage()
+}
+
+// migrateStorage 给已经存在的表补上新列。HasTable 发现表在时不会再迁移。
+func migrateStorage() error {
+	raw := getDataAction()
+	sqlite, ok := raw.(*oltp.Sqlite)
+	if !ok {
+		return nil
+	}
+	db, err := sqlite.GetModelDB(NewPayable())
+	if err != nil {
+		return err
+	}
+	migrator, ok := db.(interface {
+		AutoMigrate(...interface{}) error
+	})
+	if !ok || migrator == nil {
+		return nil
+	}
+	return migrator.AutoMigrate(NewPayable(), NewDecisionRecord(), NewApproval())
 }

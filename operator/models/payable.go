@@ -17,6 +17,7 @@ type Payable struct {
 	DueAt        string `json:"dueAt" desc:"到期时间"`
 	Memo         string `json:"memo" desc:"备注"`
 	State        string `json:"state" desc:"状态"`
+	TxHash       string `json:"txHash" desc:"交易哈希"`
 }
 
 // NewPayable 创建完整初始化的应付。
@@ -63,11 +64,19 @@ func UpsertPayable(code, category, payee, amount, due, memo string) error {
 
 // UpdatePayableState 更新应付状态。
 func UpdatePayableState(code, state string) error {
+	return UpdatePayableSettlement(code, state, "")
+}
+
+// UpdatePayableSettlement 更新应付状态，并在有交易哈希时记下它。
+func UpdatePayableSettlement(code, state, txHash string) error {
 	row, err := FindPayable(code)
 	if err != nil || row == nil {
 		return err
 	}
 	row.State = state
+	if strings.TrimSpace(txHash) != "" {
+		row.TxHash = txHash
+	}
 	return getDataAction().Update(row)
 }
 

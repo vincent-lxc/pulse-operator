@@ -31,6 +31,21 @@ type ExecResult struct {
 	Calldata  string
 	// Product 是处理这笔执行的 Circle 产品标签，例如 circle:wallets。
 	Product string
+	// CircleTxID 是 Circle 返回的交易 id，不是链上哈希。
+	CircleTxID string
+	// CircleState 是 Circle 交易状态，例如 COMPLETE 或 FAILED。
+	CircleState string
+}
+
+// PendingSource 读取 PolicyVault 上仍未决的审批。
+type PendingSource interface {
+	ListPending(ctx context.Context) ([]Approval, error)
+}
+
+// RevertProber 用 eth_call 复现回退，便于解出自定义错误。
+type RevertProber interface {
+	ProbeOwner(ctx context.Context, data []byte) error
+	ProbeAgent(ctx context.Context, data []byte) error
 }
 
 // Chain 读取金库并可选地提交交易。

@@ -127,6 +127,8 @@ type Decision struct {
 	SoftNote     string
 	Calldata     string
 	Product      string
+	CircleTxID   string `json:"circle_tx_id,omitempty"`
+	CircleState  string `json:"circle_state,omitempty"`
 }
 
 // Liquidity 是余额、即将到期义务和储备目标的对照。
@@ -156,6 +158,7 @@ type Report struct {
 	Liquidity        Liquidity
 	OpeningLiquidity Liquidity
 	Decisions        []Decision
+	Pending          []Approval
 	Notices          []Notice
 	Categories       map[string]Category
 	PayeePaidAt      map[string]time.Time

@@ -66,6 +66,8 @@ The fixture also prints two inflows that are already inside the 20 USDC balance:
 
 No chain write happens. `chainDriver: mock` is the offline snapshot. A later mock run continues from `data/mock-state.json` (balance, budgets, pending approvals) so it does not sweep the same surplus again. `chainDriver: rpc` with `mode: dry-run` reads Arc and `eth_call`s `pay`. A simulated pay (`dry_run_paid`) updates the in-run balance and cooldown so the sweep amount matches a live run, and it does not mark the payable paid. An `eth_call` revert is stored on the decision. The `run` and `liquidity` lines are the observation before execution.
 
+`paid` and `closed` payables stay out of the obligation total. An `escalated` payable still counts until approve marks it `paid` (and stores the tx hash) or reject marks it `closed`. A dry-run approve or reject does not change the payable.
+
 USDC `Transfer` logs are read in chunks of `logChunk` (default 9000). The first scan is the last `logLookback` blocks unless `fullLogScan: true`. `data/log-cursor.json` stores the last scanned block. Public `https://rpc.testnet.arc.io` often returns HTTP 429; RPC calls retry with backoff. Fallback endpoint: `https://rpc.blockdaemon.testnet.arc.io`. On-chain inflows are tagged `local:rpc`.
 
 The API and gRPC processes bind to `listen` (default `127.0.0.1`). `OPERATOR_BIND` overrides it. Loopback binds also set the framework local-visit check. Core's admin view (`-view`) still listens on `:<port>` on every interface; that address is hardcoded in the framework.
@@ -89,7 +91,9 @@ go build -o bin/pulse ./cmd/pulse
 
 `-p` is the base port. Core gives DataCenterID 1 to its built-in `server` service, so that process listens on 18091. This service is registered second and listens on 18092 (`base + DataCenterID - 1`). The view process proxies `/api/*`, so the same dashboard URL also works on port 43123. gRPC follows the same split: pass `-grpc 19091` and the operator gRPC port is 19092. HTTP and gRPC bind to 127.0.0.1 unless `OPERATOR_BIND` or `listen` says otherwise.
 
-In the admin UI open menu management, run **更新菜单**, then open Decisions, Payables, Approvals, Revenue, Categories, Cycles. Manage routes are view and search only. The local view signs a TestToken for `platform-admin` by itself.
+In the admin UI open menu management, run **更新菜单**, then open Decisions, Payables, Approvals, Revenue, Categories, Cycles. Manage routes are view and search only, except Approvals, which also has Approve and Reject. The local view signs a TestToken for `platform-admin` by itself.
+
+Decisions and Approvals include `circle_tx_id` and `circle_state` when Circle submitted the transaction. The browser document title stays **BitZoom Exchange Admin**. Core embeds that string in the admin frontend and `IService` has no title setting, so this service cannot rename it. The sidebar name is still 金库 / Treasury.
 
 ```bash
 curl -s http://127.0.0.1:18092/api/operator/dashboard
@@ -107,6 +111,10 @@ curl -s -X POST http://127.0.0.1:18092/api/operator/reject \
 ```
 
 Approve and Reject also appear on Treasury → Approvals after **更新菜单**. Select the row, then run the command. Those manage routes need the admin session. The public routes above follow the same rule as `runonce`: keep the process on loopback.
+
+Approving a request that is no longer pending returns HTTP 422 with the decoded custom error, for example `RequestNotPending(4)` or `DecisionAlreadyUsed(0x…)`. The audit line stores that reason. A transport failure is still HTTP 500.
+
+Each run copies `pendingRequestIds()` into Approvals. Loading the dashboard does the same read, without scanning logs. A request opened by another signer shows up there. A row that is already approved or rejected is not moved back to pending. The dashboard `circle` field comes from the current `executor` (`circle:wallets`, `circle:agent`, or `local:key`). If the config file cannot be read, the last cycle's value is kept.
 
 Iris returns 404 with its message when a burn is unknown (`POST /api/operator/cctpin`), instead of an empty 500.
 
@@ -222,3 +230,4 @@ Run the two Go modules separately. There is no root `go.work`: the payment CLI a
 - Agent-wallet spending-limit changes. Reading the supported chain is in code. Setting a limit needs a human email OTP, and Circle rejects the call on testnet.
 - CCTP discovery without a burn transaction hash. Iris looks up one source transaction. It does not stream every mint to the vault. The USDC `Transfer` log still catches the mint after it lands.
 - The admin view listen address. API and gRPC honor `listen` / `OPERATOR_BIND`. The framework's HTML server always uses `:<view port>`.
+- The admin document title. The embedded frontend is **BitZoom Exchange Admin**. There is no config key for it.

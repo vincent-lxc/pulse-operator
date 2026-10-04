@@ -134,11 +134,17 @@ is tagged `circle:wallets`, and the sample inflows are tagged `circle:cctp` and
 Live Arc testnet steps, the exact env vars, and a short screen-record script are in
 [docs/operator-agent.md](docs/operator-agent.md). Circle Wallets sends `feeLevel: MEDIUM`
 (or explicit gwei `maxFee` / `priorityFee` / `gasLimit`) and polls
-`GET /v1/w3s/transactions/{id}` until `COMPLETE`. Owner approve/reject is on
-`POST /api/operator/approve` and the Approvals view. Telegram sends when
-`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set. `loopEnabled` stays off
-unless `loopInterval` and `maxSpendPerRunUSDC` are set. If `rpc.testnet.arc.io`
-returns 429, use `https://rpc.blockdaemon.testnet.arc.io`.
+`GET /v1/w3s/transactions/{id}` until `COMPLETE`. The Circle transaction id and
+state are stored on the decision and the approval. Owner approve/reject is on
+`POST /api/operator/approve` and the Approvals view: approve marks the payable
+paid, reject marks it closed, and a request that is no longer pending returns
+the decoded vault error as HTTP 422. Pending requests created elsewhere are
+synced from `pendingRequestIds()`. The dashboard `circle` field follows the
+current executor. Telegram sends when `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` are set. `loopEnabled` stays off unless `loopInterval` and
+`maxSpendPerRunUSDC` are set. If `rpc.testnet.arc.io` returns 429, use
+`https://rpc.blockdaemon.testnet.arc.io`. The admin document title stays the
+framework default.
 
 ## License
 

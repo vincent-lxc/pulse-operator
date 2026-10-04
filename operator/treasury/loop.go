@@ -27,7 +27,7 @@ type LoopInput struct {
 	LimitNote     string
 }
 
-// Run 执行一轮。终端状态的应付（paid、escalated）不会再次提交。
+// Run 执行一轮。paid 和 closed 不再进入义务；仍在审批中的 escalated 会计入义务。
 func Run(ctx context.Context, in LoopInput) (Report, error) {
 	if in.Chain == nil {
 		return Report{}, fmt.Errorf("chain client is required")
@@ -67,8 +67,11 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 	open := make([]Payable, 0, len(in.Payables))
 	var obligated = big.NewInt(0)
 	for _, p := range in.Payables {
-		if p.Status == "paid" || p.Status == "escalated" {
-			if p.Status == "escalated" && DueWithin(p, in.Policy.Now, in.Policy.Horizon) {
+		switch p.Status {
+		case "paid", "closed":
+			continue
+		case "escalated":
+			if DueWithin(p, in.Policy.Now, in.Policy.Horizon) {
 				obligated.Add(obligated, unitsOrZero(p.Amount))
 			}
 			continue
@@ -98,6 +101,7 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 		OpeningBalance:   new(big.Int).Set(unitsOrZero(snap.Balance)),
 		Block:            snap.Block,
 		Inflows:          append([]Inflow(nil), snap.Inflows...),
+		Pending:          append([]Approval(nil), snap.Pending...),
 		OpeningLiquidity: pre,
 		Categories:       snap.Categories,
 		PayeePaidAt:      lastPaid,
@@ -133,6 +137,8 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 				Amount:       d.Amount,
 				DecisionHash: callHash,
 			})
+			d.CircleTxID = res.CircleTxID
+			d.CircleState = res.CircleState
 			if err != nil {
 				if errors.Is(err, ErrAgentKeyRequired) {
 					d.Outcome = "agent_key_required"
@@ -195,6 +201,8 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 			return Report{}, err
 		}
 		res, err := in.Chain.Sweep(ctx, SweepCall{Amount: sweep.Amount, DecisionHash: callHash, Reserve: snap.Reserve})
+		sweep.CircleTxID = res.CircleTxID
+		sweep.CircleState = res.CircleState
 		if err != nil {
 			if errors.Is(err, ErrOwnerKeyRequired) {
 				sweep.Outcome = "owner_key_required"
@@ -286,10 +294,12 @@ func writeDecision(log *AuditLog, runID string, d Decision) error {
 		return err
 	}
 	return auditPayload(log, runID, "execution", d.DecisionHash, d.TxHash, d.Outcome, d.Product, map[string]any{
-		"action":     d.Action,
-		"payable_id": d.PayableID,
-		"request_id": d.RequestID,
-		"circle":     d.Product,
+		"action":       d.Action,
+		"payable_id":   d.PayableID,
+		"request_id":   d.RequestID,
+		"circle":       d.Product,
+		"circle_tx_id": d.CircleTxID,
+		"circle_state": d.CircleState,
 	})
 }
 

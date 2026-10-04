@@ -24,6 +24,8 @@ type DecisionRecord struct {
 	RequestID     string `json:"requestID" desc:"链上审批号"`
 	SoftNote      string `json:"softNote" desc:"软判断备注"`
 	CircleProduct string `json:"circle" desc:"Circle 产品"`
+	CircleTxID    string `json:"circle_tx_id" desc:"Circle 交易号"`
+	CircleState   string `json:"circle_state" desc:"Circle 状态"`
 }
 
 // NewDecisionRecord 创建完整初始化的决策。
@@ -68,6 +70,11 @@ func ListDecisions() ([]*DecisionRecord, error) {
 	var rows []*DecisionRecord
 	err := getDataAction().Load(newSearch(NewDecisionRecord(), 500), &rows)
 	return rows, err
+}
+
+// FindDecision 按 decisionHash 查找决策。
+func FindDecision(code string) (*DecisionRecord, error) {
+	return findDecision(code)
 }
 
 func findDecision(code string) (*DecisionRecord, error) {

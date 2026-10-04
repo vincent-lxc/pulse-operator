@@ -53,6 +53,14 @@ func (c tagChain) Approve(ctx context.Context, requestID string) (ExecResult, er
 	return res, err
 }
 
+func (c tagChain) ListPending(ctx context.Context) ([]Approval, error) {
+	src, ok := c.inner.(PendingSource)
+	if !ok {
+		return nil, nil
+	}
+	return src.ListPending(ctx)
+}
+
 func (c tagChain) Reject(ctx context.Context, requestID string) (ExecResult, error) {
 	inner, ok := c.inner.(ApprovalSender)
 	if !ok {
@@ -110,9 +118,9 @@ func (c walletsChain) Pay(ctx context.Context, call PayCall) (ExecResult, error)
 		Fee:            c.fee,
 	})
 	if err != nil {
-		return ExecResult{Product: ProductWallets}, err
+		return circleFail(ctx, c.observe, tx, PackPayData(call), false, ProductWallets, err)
 	}
-	return explain(ctx, c.observe, tx.TxHash, call.DecisionHash, ProductWallets, false), nil
+	return explain(ctx, c.observe, tx, call.DecisionHash, ProductWallets, false), nil
 }
 
 func (c walletsChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, error) {
@@ -129,9 +137,10 @@ func (c walletsChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, er
 		Fee:            c.fee,
 	})
 	if err != nil {
-		return ExecResult{Product: ProductWallets}, err
+		data, _ := PackSweep(call.Amount, call.DecisionHash)
+		return circleFail(ctx, c.observe, tx, data, true, ProductWallets, err)
 	}
-	res := explain(ctx, c.observe, tx.TxHash, call.DecisionHash, ProductWallets, true)
+	res := explain(ctx, c.observe, tx, call.DecisionHash, ProductWallets, true)
 	return res, nil
 }
 
@@ -162,19 +171,31 @@ func (c walletsChain) ownerContract(ctx context.Context, requestID, action, sign
 		Fee:            c.fee,
 	})
 	if err != nil {
-		return ExecResult{Product: ProductWallets}, err
+		data, packErr := packOwner(action, requestID)
+		if packErr != nil {
+			return ExecResult{Product: ProductWallets, CircleTxID: tx.ID, CircleState: tx.State}, err
+		}
+		return circleFail(ctx, c.observe, tx, data, true, ProductWallets, err)
 	}
-	return ExecResult{Status: status, TxHash: tx.TxHash, RequestID: strings.TrimSpace(requestID), Product: ProductWallets}, nil
+	return ExecResult{Status: status, TxHash: tx.TxHash, RequestID: strings.TrimSpace(requestID), Product: ProductWallets, CircleTxID: tx.ID, CircleState: tx.State}, nil
 }
 
-func explain(ctx context.Context, observe Chain, txHash string, decision common.Hash, product string, sweep bool) ExecResult {
-	res := ExecResult{Status: "circle_confirmed", TxHash: txHash, Product: product}
+func (c walletsChain) ListPending(ctx context.Context) ([]Approval, error) {
+	src, ok := c.observe.(PendingSource)
+	if !ok {
+		return nil, nil
+	}
+	return src.ListPending(ctx)
+}
+
+func explain(ctx context.Context, observe Chain, tx circleTx, decision common.Hash, product string, sweep bool) ExecResult {
+	res := ExecResult{Status: "circle_confirmed", TxHash: tx.TxHash, Product: product, CircleTxID: tx.ID, CircleState: tx.State}
 	if sweep {
 		res.Status = "swept"
 		return res
 	}
-	if explainer, ok := observe.(PayExplainer); ok && txHash != "" {
-		status, requestID, err := explainer.ExplainPay(ctx, txHash, decision)
+	if explainer, ok := observe.(PayExplainer); ok && tx.TxHash != "" {
+		status, requestID, err := explainer.ExplainPay(ctx, tx.TxHash, decision)
 		if err == nil && status != "" {
 			res.Status = status
 			res.RequestID = requestID
@@ -187,6 +208,52 @@ func explain(ctx context.Context, observe Chain, txHash string, decision common.
 func OwnerActionHash(action, requestID string) common.Hash {
 	sum := crypto.Keccak256([]byte("pulse-operator/" + action + "/v1:" + strings.TrimSpace(requestID)))
 	return common.BytesToHash(sum)
+}
+
+// PackPayData 编码 pay，供失败后的 eth_call 复现使用。
+func PackPayData(call PayCall) []byte {
+	data, err := PackPay(call.Category, call.Payee, call.Amount, call.DecisionHash)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+func packOwner(action, requestID string) ([]byte, error) {
+	if action == "reject" {
+		return PackReject(requestID)
+	}
+	return PackApprove(requestID)
+}
+
+func circleFail(ctx context.Context, observe Chain, tx circleTx, data []byte, owner bool, product string, execErr error) (ExecResult, error) {
+	res := ExecResult{Product: product, CircleTxID: tx.ID, CircleState: tx.State, TxHash: tx.TxHash}
+	probed := probeRevert(ctx, observe, data, owner)
+	return res, preferRevert(execErr, probed)
+}
+
+func probeRevert(ctx context.Context, observe Chain, data []byte, owner bool) error {
+	prober, ok := observe.(RevertProber)
+	if !ok || len(data) == 0 {
+		return nil
+	}
+	if owner {
+		return prober.ProbeOwner(ctx, data)
+	}
+	return prober.ProbeAgent(ctx, data)
+}
+
+func preferRevert(execErr, probeErr error) error {
+	if RevertReason(probeErr) != "" {
+		return probeErr
+	}
+	if rev := AnnotateRevert(execErr); RevertReason(rev) != "" {
+		return rev
+	}
+	if execErr != nil {
+		return execErr
+	}
+	return probeErr
 }
 
 // TagProduct 在产品标签为空时填上默认值。

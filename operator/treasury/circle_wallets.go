@@ -245,9 +245,24 @@ func parseCircleTx(raw []byte) circleTx {
 		ID:     firstNonEmpty(body.Data.Transaction.ID, body.Data.ID),
 		TxHash: firstNonEmpty(body.Data.Transaction.TxHash, body.Data.Transaction.TransactionHash, body.Data.TxHash, body.Data.TransactionHash),
 		State:  firstNonEmpty(body.Data.Transaction.State, body.Data.State),
-		Reason: firstNonEmpty(body.Data.Transaction.ErrorReason, body.Data.Transaction.ErrorDetails, body.Data.Transaction.Reason, body.Data.ErrorReason, body.Data.ErrorDetails, body.Data.Reason),
+		Reason: joinReason(body.Data.Transaction.ErrorReason, body.Data.Transaction.ErrorDetails, body.Data.Transaction.Reason, body.Data.ErrorReason, body.Data.ErrorDetails, body.Data.Reason),
 	}
 	return tx
+}
+
+// joinReason 保留每一段非空原因。errorReason 经常只写 "execution reverted"，选择器在 errorDetails 里。
+func joinReason(values ...string) string {
+	seen := map[string]bool{}
+	parts := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		parts = append(parts, v)
+	}
+	return strings.Join(parts, " ")
 }
 
 func firstNonEmpty(values ...string) string {

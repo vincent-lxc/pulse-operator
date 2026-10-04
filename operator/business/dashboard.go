@@ -2,7 +2,12 @@
 package business
 
 import (
+	"context"
+	"os"
+	"time"
+
 	"github.com/vincent-lxc/pulse-operator/operator/models"
+	"github.com/vincent-lxc/pulse-operator/operator/treasury"
 )
 
 // Dashboard 是管理界面之外的只读 JSON 视图。
@@ -36,6 +41,8 @@ type DecisionView struct {
 	Hash          string `json:"hash"`
 	TxHash        string `json:"txHash"`
 	CircleProduct string `json:"circle"`
+	CircleTxID    string `json:"circle_tx_id"`
+	CircleState   string `json:"circle_state"`
 }
 
 // ApprovalView 是待人工处理的公开字段。
@@ -47,6 +54,8 @@ type ApprovalView struct {
 	State         string `json:"state"`
 	Reason        string `json:"reason"`
 	CircleProduct string `json:"circle"`
+	CircleTxID    string `json:"circle_tx_id"`
+	CircleState   string `json:"circle_state"`
 }
 
 // RevenueView 是收入观察的公开字段。
@@ -72,6 +81,7 @@ func LoadDashboard() (Dashboard, error) {
 		view.Surplus = last.SurplusUnits
 		view.CircleProduct = last.CircleProduct
 	}
+	refreshDashboard(&view)
 	cats, err := models.ListSpendCategories()
 	if err != nil {
 		return view, err
@@ -87,7 +97,7 @@ func LoadDashboard() (Dashboard, error) {
 	}
 	for _, d := range decisions {
 		view.Decisions = append(view.Decisions, DecisionView{
-			Action: d.Action, Payable: d.PayableCode, Amount: d.AmountUnits, ReasonCode: d.ReasonCode, Outcome: d.Outcome, Hash: d.Code, TxHash: d.TxHash, CircleProduct: d.CircleProduct,
+			Action: d.Action, Payable: d.PayableCode, Amount: d.AmountUnits, ReasonCode: d.ReasonCode, Outcome: d.Outcome, Hash: d.Code, TxHash: d.TxHash, CircleProduct: d.CircleProduct, CircleTxID: d.CircleTxID, CircleState: d.CircleState,
 		})
 	}
 	approvals, err := models.ListApprovals()
@@ -99,7 +109,7 @@ func LoadDashboard() (Dashboard, error) {
 			continue
 		}
 		view.Approvals = append(view.Approvals, ApprovalView{
-			RequestID: a.RequestID, Category: a.CategoryCode, Payee: a.Payee, Amount: a.AmountUnits, State: a.State, Reason: a.ReasonCode, CircleProduct: a.CircleProduct,
+			RequestID: a.RequestID, Category: a.CategoryCode, Payee: a.Payee, Amount: a.AmountUnits, State: a.State, Reason: a.ReasonCode, CircleProduct: a.CircleProduct, CircleTxID: a.CircleTxID, CircleState: a.CircleState,
 		})
 	}
 	revenues, err := models.ListRevenues()
@@ -110,6 +120,42 @@ func LoadDashboard() (Dashboard, error) {
 		view.Revenues = append(view.Revenues, RevenueView{Source: r.Source, Ref: r.Ref, Amount: r.AmountUnits, From: r.FromAddress, CircleProduct: r.CircleProduct})
 	}
 	return view, nil
+}
+
+// refreshDashboard 用当前配置覆盖上一轮留下的 circle，并尽力同步链上 pending。
+// 拨号失败不影响看板。这里不加循环锁，避免和正在进行的 approve 互相等待。
+func refreshDashboard(view *Dashboard) {
+	cfg, err := loadRuntimeConfig()
+	if err != nil {
+		return
+	}
+	if product := cfg.ExecutorProduct(); product != "" {
+		view.CircleProduct = product
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	chain, closeChain, err := openChain(ctx, cfg, nil)
+	if err != nil {
+		return
+	}
+	defer closeChain()
+	src, ok := chain.(treasury.PendingSource)
+	if !ok {
+		return
+	}
+	items, err := src.ListPending(ctx)
+	if err != nil {
+		return
+	}
+	_ = SyncChainApprovals(items)
+}
+
+func loadRuntimeConfig() (treasury.Config, error) {
+	path := os.Getenv("OPERATOR_CONFIG")
+	if path == "" {
+		path = "config/dry-run.yaml"
+	}
+	return treasury.LoadConfig(path)
 }
 
 // RecordRevenue 写入一笔手工收入，下一轮循环会计入未对账余额。

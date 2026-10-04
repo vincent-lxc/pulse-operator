@@ -114,6 +114,48 @@ func dialRPC(ctx context.Context, url string) (*ethclient.Client, error) {
 // Close 关闭 RPC 连接。
 func (c *LiveChain) Close() { c.eth.Close() }
 
+// ListPending 读取仍在链上等待的审批。
+func (c *LiveChain) ListPending(ctx context.Context) ([]Approval, error) {
+	return c.pending(ctx)
+}
+
+// ProbeOwner 以金库 owner 身份 eth_call，把回退解成自定义错误。
+func (c *LiveChain) ProbeOwner(ctx context.Context, data []byte) error {
+	owner, err := c.callAddress(ctx, "owner")
+	if err != nil {
+		return err
+	}
+	return c.probe(ctx, owner, data)
+}
+
+// ProbeAgent 以配置里的 agent 地址 eth_call。
+func (c *LiveChain) ProbeAgent(ctx context.Context, data []byte) error {
+	return c.probe(ctx, c.agent, data)
+}
+
+func (c *LiveChain) probe(ctx context.Context, from common.Address, data []byte) error {
+	_, err := c.eth.CallContract(ctx, ethereum.CallMsg{From: from, To: &c.vault, Data: data}, nil)
+	if err == nil {
+		return nil
+	}
+	return AnnotateRevert(err)
+}
+
+func (c *LiveChain) withRevert(ctx context.Context, from common.Address, data []byte, err error) error {
+	if err == nil {
+		return nil
+	}
+	if rev := AnnotateRevert(err); RevertReason(rev) != "" {
+		return rev
+	}
+	if from != (common.Address{}) && len(data) > 0 {
+		if rev := c.probe(ctx, from, data); RevertReason(rev) != "" {
+			return rev
+		}
+	}
+	return err
+}
+
 // Observe 读取余额、品类、白名单、待审批和 USDC 转入。
 func (c *LiveChain) Observe(ctx context.Context) (Snapshot, error) {
 	balance, err := c.callUint(ctx, "balance")
@@ -183,11 +225,11 @@ func (c *LiveChain) Pay(ctx context.Context, call PayCall) (ExecResult, error) {
 	from := crypto.PubkeyToAddress(c.agentKey.PublicKey)
 	tx, err := c.send(ctx, from, c.agentKey, data)
 	if err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, c.withRevert(ctx, from, data, err)
 	}
 	receipt, err := c.wait(ctx, tx.Hash())
 	if err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, c.withRevert(ctx, from, data, err)
 	}
 	res := ExecResult{TxHash: tx.Hash().Hex(), Calldata: "0x" + fmt.Sprintf("%x", data)}
 	if paid, id, ok := decodePayReceipt(receipt, call.DecisionHash); ok {
@@ -220,10 +262,10 @@ func (c *LiveChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, erro
 	from := crypto.PubkeyToAddress(c.ownerKey.PublicKey)
 	tx, err := c.send(ctx, from, c.ownerKey, data)
 	if err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, c.withRevert(ctx, from, data, err)
 	}
 	if _, err := c.wait(ctx, tx.Hash()); err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, c.withRevert(ctx, from, data, err)
 	}
 	return ExecResult{Status: "swept", TxHash: tx.Hash().Hex(), Calldata: "0x" + fmt.Sprintf("%x", data)}, nil
 }
@@ -257,10 +299,10 @@ func (c *LiveChain) ownerAction(ctx context.Context, requestID, method, liveStat
 	from := crypto.PubkeyToAddress(c.ownerKey.PublicKey)
 	tx, err := c.send(ctx, from, c.ownerKey, data)
 	if err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, c.withRevert(ctx, from, data, err)
 	}
 	if _, err := c.wait(ctx, tx.Hash()); err != nil {
-		return ExecResult{}, err
+		return ExecResult{}, c.withRevert(ctx, from, data, err)
 	}
 	return ExecResult{Status: liveStatus, TxHash: tx.Hash().Hex(), RequestID: strings.TrimSpace(requestID), Calldata: "0x" + fmt.Sprintf("%x", data)}, nil
 }
@@ -277,6 +319,9 @@ func (c *LiveChain) simulatePay(ctx context.Context, data []byte) (ExecResult, e
 	out, err := c.eth.CallContract(ctx, ethereum.CallMsg{From: c.agent, To: &c.vault, Data: data}, nil)
 	if err != nil {
 		res.Status = "dry_run_reverted"
+		if rev := AnnotateRevert(err); RevertReason(rev) != "" {
+			return res, rev
+		}
 		return res, fmt.Errorf("eth_call reverted: %s", err.Error())
 	}
 	values, err := contractABI.Unpack("pay", out)
@@ -297,13 +342,20 @@ func (c *LiveChain) simulatePay(ctx context.Context, data []byte) (ExecResult, e
 
 func (c *LiveChain) simulate(ctx context.Context, method string, data []byte, okStatus string) (ExecResult, error) {
 	from := c.agent
-	if method != "pay" && c.ownerKey != nil {
-		from = crypto.PubkeyToAddress(c.ownerKey.PublicKey)
+	if method != "pay" {
+		if c.ownerKey != nil {
+			from = crypto.PubkeyToAddress(c.ownerKey.PublicKey)
+		} else if owner, err := c.callAddress(ctx, "owner"); err == nil {
+			from = owner
+		}
 	}
 	res := ExecResult{Status: okStatus, Calldata: "0x" + fmt.Sprintf("%x", data)}
 	_, err := c.eth.CallContract(ctx, ethereum.CallMsg{From: from, To: &c.vault, Data: data}, nil)
 	if err != nil {
 		res.Status = "dry_run_reverted"
+		if rev := AnnotateRevert(err); RevertReason(rev) != "" {
+			return res, rev
+		}
 		return res, fmt.Errorf("eth_call %s reverted: %s", method, err.Error())
 	}
 	return res, nil
@@ -317,7 +369,7 @@ func (c *LiveChain) send(ctx context.Context, from common.Address, key *ecdsa.Pr
 	msg := ethereum.CallMsg{From: from, To: &c.vault, Data: data}
 	gas, err := c.eth.EstimateGas(ctx, msg)
 	if err != nil {
-		return nil, err
+		return nil, AnnotateRevert(err)
 	}
 	tx := types.NewTx(&types.LegacyTx{
 		Nonce:    nonce,
@@ -622,7 +674,7 @@ func approvalFromABI(id string, value interface{}) (Approval, error) {
 		Payee:        payee,
 		Amount:       bigField(v, "Amount"),
 		DecisionHash: hash,
-		Reason:       fmt.Sprintf("%d", uintField(v, "Reason")),
+		Reason:       reasonLabel(uintField(v, "Reason")),
 		Status:       statusName(uintField(v, "Status")),
 	}, nil
 }
@@ -734,6 +786,19 @@ func wordField(v reflect.Value, name string) string {
 		return ""
 	}
 	return strings.TrimRight(string(b[:]), "\x00")
+}
+
+func reasonLabel(v uint64) string {
+	switch v {
+	case 1:
+		return ReasonOverTxCap
+	case 2:
+		return ReasonOverBudget
+	case 0:
+		return ""
+	default:
+		return fmt.Sprintf("%d", v)
+	}
 }
 
 func statusName(v uint64) string {

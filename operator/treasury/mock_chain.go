@@ -27,6 +27,17 @@ func (m *MockChain) Observe(context.Context) (Snapshot, error) {
 	return cloneSnapshot(m.snap), nil
 }
 
+// ListPending 返回仍未决的模拟审批。
+func (m *MockChain) ListPending(context.Context) ([]Approval, error) {
+	out := make([]Approval, 0, len(m.snap.Pending))
+	for _, item := range m.snap.Pending {
+		if item.Status == "" || item.Status == "pending" {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
 // Snapshot 返回调用后的模拟状态，供 dry-run 在进程外延续。
 func (m *MockChain) Snapshot() Snapshot {
 	return cloneSnapshot(m.snap)

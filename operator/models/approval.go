@@ -19,6 +19,8 @@ type Approval struct {
 	State         string `json:"state" desc:"状态"`
 	ReasonCode    string `json:"reasonCode" desc:"原因码"`
 	CircleProduct string `json:"circle" desc:"Circle 产品"`
+	CircleTxID    string `json:"circle_tx_id" desc:"Circle 交易号"`
+	CircleState   string `json:"circle_state" desc:"Circle 状态"`
 }
 
 // NewApproval 创建完整初始化的审批。
@@ -41,8 +43,8 @@ func (own *Approval) GetHash() string {
 	return utils.HashCodes("approval", strings.ToLower(own.Code))
 }
 
-// SaveApproval 插入或更新审批。
-func SaveApproval(code, requestID, category, payee, amount, decisionHash, state, reason, circle string) error {
+// SaveApproval 插入或更新审批。circle、circleTxID、circleState 为空时不覆盖已有值。
+func SaveApproval(code, requestID, category, payee, amount, decisionHash, state, reason, circle, circleTxID, circleState string) error {
 	existing, err := findApproval(code)
 	if err != nil {
 		return err
@@ -58,6 +60,8 @@ func SaveApproval(code, requestID, category, payee, amount, decisionHash, state,
 		row.State = state
 		row.ReasonCode = reason
 		row.CircleProduct = circle
+		row.CircleTxID = circleTxID
+		row.CircleState = circleState
 		touchNew(row.SetID, row.SetCreatedAt, row.SetUpdatedAt, row.SetHashcode, row.GetHash(), 0)
 		return getDataAction().Insert(row)
 	}
@@ -67,7 +71,18 @@ func SaveApproval(code, requestID, category, payee, amount, decisionHash, state,
 	if strings.TrimSpace(circle) != "" {
 		existing.CircleProduct = circle
 	}
+	if strings.TrimSpace(circleTxID) != "" {
+		existing.CircleTxID = circleTxID
+	}
+	if strings.TrimSpace(circleState) != "" {
+		existing.CircleState = circleState
+	}
 	return getDataAction().Update(existing)
+}
+
+// FindApproval 按审批键查找。
+func FindApproval(code string) (*Approval, error) {
+	return findApproval(code)
 }
 
 // ListApprovals 返回全部审批。

@@ -44,8 +44,10 @@ type RunOnceResponse struct {
 
 // ApprovalActionResponse 是 owner approve 或 reject 的回执。
 type ApprovalActionResponse struct {
-	RequestID string `json:"requestID" desc:"链上请求号"`
-	Status    string `json:"status" desc:"结果"`
-	TxHash    string `json:"txHash" desc:"交易哈希"`
-	Circle    string `json:"circle" desc:"Circle 产品"`
+	RequestID   string `json:"requestID" desc:"链上请求号"`
+	Status      string `json:"status" desc:"结果"`
+	TxHash      string `json:"txHash" desc:"交易哈希"`
+	Circle      string `json:"circle" desc:"Circle 产品"`
+	CircleTxID  string `json:"circle_tx_id,omitempty" desc:"Circle 交易号"`
+	CircleState string `json:"circle_state,omitempty" desc:"Circle 状态"`
 }
