@@ -64,6 +64,9 @@ func SaveApproval(code, requestID, category, payee, amount, decisionHash, state,
 	existing.State = state
 	existing.RequestID = requestID
 	existing.ReasonCode = reason
+	if strings.TrimSpace(circle) != "" {
+		existing.CircleProduct = circle
+	}
 	return getDataAction().Update(existing)
 }
 

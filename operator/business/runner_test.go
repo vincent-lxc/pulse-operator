@@ -109,6 +109,26 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
+func TestSaveApprovalWritesCircleOnUpdate(t *testing.T) {
+	if err := models.EnsureStorage(); err != nil {
+		t.Fatal(err)
+	}
+	const code = "approval-circle-update"
+	if err := models.SaveApproval(code, "9", "people", "0x2222222222222222222222222222222222222222", "3.000000", "0xabc", "pending", "over_tx_cap", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := models.SaveApproval(code, "9", "people", "0x2222222222222222222222222222222222222222", "3.000000", "0xabc", "simulated_approved", "over_tx_cap", treasury.ProductWallets); err != nil {
+		t.Fatal(err)
+	}
+	row, err := models.FindApprovalByRequest("9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row == nil || row.State != "simulated_approved" || row.CircleProduct != treasury.ProductWallets {
+		t.Fatalf("circle not stored on update: %+v", row)
+	}
+}
+
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
