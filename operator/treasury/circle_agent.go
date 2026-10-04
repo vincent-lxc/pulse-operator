@@ -76,6 +76,30 @@ func (c agentChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, erro
 	return explain(ctx, c.observe, tx, call.DecisionHash, ProductAgent, true), nil
 }
 
+// Approve 用 owner 地址调用 circle wallet execute approve。
+func (c agentChain) Approve(ctx context.Context, requestID string) (ExecResult, error) {
+	return c.ownerExecute(ctx, requestID, "approve(uint256)", "approved")
+}
+
+// Reject 用 owner 地址调用 circle wallet execute reject。
+func (c agentChain) Reject(ctx context.Context, requestID string) (ExecResult, error) {
+	return c.ownerExecute(ctx, requestID, "reject(uint256)", "rejected")
+}
+
+func (c agentChain) ownerExecute(ctx context.Context, requestID, signature, status string) (ExecResult, error) {
+	if c.owner == "" {
+		return ExecResult{Product: ProductAgent}, ErrOwnerKeyRequired
+	}
+	if _, err := ParseRequestID(requestID); err != nil {
+		return ExecResult{Product: ProductAgent}, err
+	}
+	tx, err := c.execute(ctx, c.owner, signature, []string{strings.TrimSpace(requestID)})
+	if err != nil {
+		return ExecResult{Product: ProductAgent}, err
+	}
+	return ExecResult{Status: status, TxHash: tx, RequestID: strings.TrimSpace(requestID), Product: ProductAgent}, nil
+}
+
 func (c agentChain) execute(ctx context.Context, from, signature string, params []string) (string, error) {
 	args := []string{"wallet", "execute", signature}
 	args = append(args, params...)

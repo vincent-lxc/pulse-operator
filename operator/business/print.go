@@ -10,7 +10,11 @@ import (
 
 // WriteReport 按固定列打印观察、流动性和每条决策。
 func WriteReport(out io.Writer, report treasury.Report) error {
-	if _, err := fmt.Fprintf(out, "run %s balance %s USDC inflows %d\n", report.RunID, treasury.FormatUSDC(report.Balance), len(report.Inflows)); err != nil {
+	balance := report.OpeningBalance
+	if balance == nil {
+		balance = report.Balance
+	}
+	if _, err := fmt.Fprintf(out, "run %s balance %s USDC inflows %d\n", report.RunID, treasury.FormatUSDC(balance), len(report.Inflows)); err != nil {
 		return err
 	}
 	for _, in := range report.Inflows {
@@ -18,7 +22,10 @@ func WriteReport(out io.Writer, report treasury.Report) error {
 			return err
 		}
 	}
-	liq := report.Liquidity
+	liq := report.OpeningLiquidity
+	if liq.Balance == nil {
+		liq = report.Liquidity
+	}
 	if _, err := fmt.Fprintf(out, "liquidity balance=%s obligations=%s floor=%s target=%s surplus=%s\n",
 		treasury.FormatUSDC(liq.Balance), treasury.FormatUSDC(liq.Obligations), treasury.FormatUSDC(liq.ReserveFloor), treasury.FormatUSDC(liq.ReserveTarget), treasury.FormatUSDC(liq.Surplus)); err != nil {
 		return err

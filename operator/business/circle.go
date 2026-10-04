@@ -3,6 +3,8 @@ package business
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/vincent-lxc/pulse-operator/operator/models"
@@ -39,7 +41,7 @@ func IngestCCTP(ctx context.Context, cfg treasury.Config, sourceDomain uint32, t
 	client := treasury.CCTPClient{BaseURL: cfg.Circle.IrisBase}
 	in, err := client.FetchCCTP(ctx, sourceDomain, txHash, cfg.Vault)
 	if err != nil {
-		return treasury.Inflow{}, err
+		return treasury.Inflow{}, irisPublic(err)
 	}
 	if _, err := rememberInflow(in, "cctp v2 iris"); err != nil {
 		return treasury.Inflow{}, err
@@ -73,6 +75,20 @@ func IngestGateway(ctx context.Context, cfg treasury.Config, raw []byte, signatu
 		return treasury.Inflow{}, err
 	}
 	return in, nil
+}
+
+func irisPublic(err error) error {
+	var status *treasury.StatusError
+	if errors.As(err, &status) && status.Status >= 400 && status.Status < 500 {
+		if status.Status == 404 || strings.Contains(strings.ToLower(status.Error()), "not found") {
+			return models.NewNotFoundError(status.Error())
+		}
+		return models.NewValidationError(status.Error())
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "not found") {
+		return models.NewNotFoundError(err.Error())
+	}
+	return err
 }
 
 func rememberInflow(in treasury.Inflow, memo string) (*models.Revenue, error) {

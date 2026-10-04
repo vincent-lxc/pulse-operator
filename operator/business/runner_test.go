@@ -65,6 +65,25 @@ func TestRunSampleLedgerPersistsDecisions(t *testing.T) {
 	if view.Approvals[0].CircleProduct != treasury.ProductWallets {
 		t.Fatalf("approval circle %+v", view.Approvals[0])
 	}
+	again, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sweep treasury.Decision
+	for _, d := range again.Decisions {
+		if d.PayableID == "cycle" {
+			sweep = d
+		}
+	}
+	if sweep.Action != treasury.ActionDefer || sweep.ReasonCode != treasury.ReasonNoSurplus {
+		t.Fatalf("second mock run swept again: %+v", sweep)
+	}
+	if payableState(treasury.Decision{Action: treasury.ActionPay, Outcome: "dry_run_paid"}) != "" {
+		t.Fatal("dry-run pay must not mark the payable paid")
+	}
+	if payableState(treasury.Decision{Action: treasury.ActionPay, Outcome: "paid"}) != "paid" {
+		t.Fatal("live pay should mark the payable paid")
+	}
 	if err := RecordRevenue("manual-1", "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "1.00", "wire"); err != nil {
 		t.Fatal(err)
 	}

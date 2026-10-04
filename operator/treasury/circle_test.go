@@ -66,8 +66,16 @@ func TestWalletsContractExecution(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"publicKey": string(pemText)}})
 			return
 		}
+		if r.URL.Path == "/v1/w3s/transactions/tx-1" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"transaction": map[string]string{
+				"id": "tx-1", "state": "COMPLETE", "txHash": "0x" + strings.Repeat("ab", 32),
+			}}})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/w3s/developer/transactions/contractExecution" {
 			t.Errorf("path %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
 			t.Error(err)
@@ -78,7 +86,7 @@ func TestWalletsContractExecution(t *testing.T) {
 			t.Errorf("entity secret decrypt: %v", err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{
-			"id": "tx-1", "txHash": "0x" + strings.Repeat("ab", 32), "state": "CONFIRMED",
+			"id": "tx-1", "state": "INITIATED",
 		}})
 	}))
 	defer srv.Close()
@@ -95,17 +103,63 @@ func TestWalletsContractExecution(t *testing.T) {
 		Contract:       "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01",
 		Signature:      "pay(bytes32,address,uint256,bytes32)",
 		Params:         params,
-		GasPrice:       WeiString(50),
-		PriorityFee:    WeiString(2),
+		Fee:            CircleFee{Level: "MEDIUM"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tx.TxHash == "" || seen["abiFunctionSignature"] != "pay(bytes32,address,uint256,bytes32)" {
+	if tx.State != "COMPLETE" || tx.TxHash == "" || seen["abiFunctionSignature"] != "pay(bytes32,address,uint256,bytes32)" {
 		t.Fatalf("tx %+v body %#v", tx, seen)
 	}
-	if seen["gasPrice"] != WeiString(50) || seen["blockchain"] != "ARC-TESTNET" || seen["walletId"] != "wallet-1" {
+	if _, ok := seen["gasPrice"]; ok {
+		t.Fatalf("gasPrice must not be sent with feeLevel: %#v", seen)
+	}
+	if seen["feeLevel"] != "MEDIUM" || seen["blockchain"] != "ARC-TESTNET" || seen["walletId"] != "wallet-1" {
 		t.Fatalf("body %#v", seen)
+	}
+}
+
+func TestWalletsExplicitGasAndFailure(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret := bytes32()
+	pemText := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: mustPKIX(t, &key.PublicKey)})
+	var seen map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/w3s/config/entity/publicKey" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"publicKey": string(pemText)}})
+			return
+		}
+		if r.URL.Path == "/v1/w3s/transactions/tx-bad" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"transaction": map[string]string{
+				"id": "tx-bad", "state": "FAILED", "errorReason": "policy denied",
+			}}})
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&seen)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"id": "tx-bad", "state": "PENDING"}})
+	}))
+	defer srv.Close()
+	client := &WalletsClient{BaseURL: srv.URL, APIKey: "test-key", EntitySecret: secret, HTTP: srv.Client()}
+	_, err = client.Execute(context.Background(), ContractExecution{
+		IdempotencyKey: "11111111-1111-1111-1111-111111111111",
+		WalletID:       "wallet-1",
+		Blockchain:     "ARC-TESTNET",
+		Contract:       "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01",
+		Signature:      "pay(bytes32,address,uint256,bytes32)",
+		Params:         []string{"0x1", "0x2", "1", "0x3"},
+		Fee:            CircleFee{Explicit: true, MaxFee: "50", PriorityFee: "2", GasLimit: "120000"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "policy denied") {
+		t.Fatal(err)
+	}
+	if seen["maxFee"] != "50" || seen["priorityFee"] != "2" || seen["gasLimit"] != "120000" {
+		t.Fatalf("explicit gas %#v", seen)
+	}
+	if _, ok := seen["feeLevel"]; ok {
+		t.Fatalf("feeLevel must not be sent with explicit gas: %#v", seen)
 	}
 }
 

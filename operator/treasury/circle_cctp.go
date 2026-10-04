@@ -50,9 +50,25 @@ func (c CCTPClient) FetchCCTP(ctx context.Context, sourceDomain uint32, txHash, 
 		return Inflow{}, err
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return Inflow{}, fmt.Errorf("cctp iris %s", strings.TrimSpace(string(body)))
+		return Inflow{}, &StatusError{Status: res.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
 	return ParseCCTPMessage(body, vault, txHash)
+}
+
+// StatusError 是上游 HTTP 错误。Body 是可返回给调用方的原文。
+type StatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	if e == nil {
+		return "upstream error"
+	}
+	if strings.TrimSpace(e.Body) == "" {
+		return fmt.Sprintf("upstream http %d", e.Status)
+	}
+	return e.Body
 }
 
 type cctpMessage struct {

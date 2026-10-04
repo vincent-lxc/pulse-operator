@@ -16,3 +16,8 @@ func NewValidationError(message string) error {
 func NewBusinessError(message string) error {
 	return servertypes.NewPublicError(servertypes.ErrorKindBusiness, servertypes.PublicCodeBusiness, message, errors.New(message))
 }
+
+// NewNotFoundError 创建 404。message 会返回给调用方。
+func NewNotFoundError(message string) error {
+	return servertypes.NewPublicError(servertypes.ErrorKindNotFound, servertypes.PublicCodeNotFound, message, errors.New(message))
+}

@@ -8,6 +8,8 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -15,6 +17,9 @@ import (
 	"github.com/vincent-lxc/pulse-operator/operator/models"
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
 )
+
+// cycleMu 保证定时循环、runonce 和 approve 不会同时发交易。
+var cycleMu sync.Mutex
 
 // RunFile 读取配置并执行一轮循环，把决策打印到 out。
 func RunFile(ctx context.Context, path string, out io.Writer) (treasury.Report, error) {
@@ -36,6 +41,14 @@ func RunFile(ctx context.Context, path string, out io.Writer) (treasury.Report, 
 
 // Run 执行一轮：导入账本、观察、决策、执行、落库。
 func Run(ctx context.Context, cfg treasury.Config) (treasury.Report, error) {
+	if !cycleMu.TryLock() {
+		return treasury.Report{}, models.NewBusinessError("operator cycle already running")
+	}
+	defer cycleMu.Unlock()
+	return runLocked(ctx, cfg)
+}
+
+func runLocked(ctx context.Context, cfg treasury.Config) (treasury.Report, error) {
 	if err := models.EnsureStorage(); err != nil {
 		return treasury.Report{}, err
 	}
@@ -99,6 +112,10 @@ func Run(ctx context.Context, cfg treasury.Config) (treasury.Report, error) {
 	if err != nil {
 		return treasury.Report{}, err
 	}
+	note, err := notifier(cfg)
+	if err != nil {
+		return treasury.Report{}, err
+	}
 	_, limitNote := treasury.SpendingLimits(cfg.Circle.Blockchain)
 	if cfg.Executor != "circle-agent" {
 		limitNote = "developer-controlled wallets and raw keys do not use Circle agent spending policies; those policies are mainnet agent wallets only"
@@ -108,7 +125,7 @@ func Run(ctx context.Context, cfg treasury.Config) (treasury.Report, error) {
 		Payables:      payables,
 		Chain:         chain,
 		Advisor:       advisor(cfg),
-		Notifier:      notifier(cfg),
+		Notifier:      note,
 		Audit:         audit,
 		LastPaid:      lastPaid,
 		Manual:        manual,
@@ -118,7 +135,7 @@ func Run(ctx context.Context, cfg treasury.Config) (treasury.Report, error) {
 	if err != nil {
 		return treasury.Report{}, err
 	}
-	if err := persist(report, manualCodes); err != nil {
+	if err := persist(cfg, report, manualCodes); err != nil {
 		return report, err
 	}
 	return report, nil
@@ -127,6 +144,10 @@ func Run(ctx context.Context, cfg treasury.Config) (treasury.Report, error) {
 func openChain(ctx context.Context, cfg treasury.Config, payables []treasury.Payable) (treasury.Chain, func(), error) {
 	if cfg.ChainDriver == "mock" {
 		snap, err := treasury.LoadFixture(cfg.VaultFixture)
+		if err != nil {
+			return nil, nil, err
+		}
+		snap, err = overlayMockState(mockStatePath(cfg), snap)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -158,6 +179,12 @@ func openChain(ctx context.Context, cfg treasury.Config, payables []treasury.Pay
 	if err != nil {
 		return nil, nil, err
 	}
+	fromBlock := cfg.FromBlock
+	if cursor, err := treasury.LoadScanCursor(cfg.ScanCursor, cfg.Vault); err != nil {
+		return nil, nil, err
+	} else if cursor > 0 && cursor+1 > fromBlock {
+		fromBlock = cursor + 1
+	}
 	client, err := treasury.DialLive(ctx, treasury.LiveOptions{
 		RPC:        rpc,
 		Mode:       cfg.Mode,
@@ -167,10 +194,13 @@ func openChain(ctx context.Context, cfg treasury.Config, payables []treasury.Pay
 		USDC:       common.HexToAddress(cfg.USDC),
 		Categories: names,
 		Payees:     payees,
-		FromBlock:  cfg.FromBlock,
+		FromBlock:  fromBlock,
 		AgentKey:   ak,
 		OwnerKey:   okey,
 		GasGwei:    cfg.Gas.MaxFeePerGasGwei,
+		Lookback:   cfg.LogLookback,
+		Chunk:      cfg.LogChunk,
+		FullScan:   cfg.FullLogScan,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -183,8 +213,7 @@ func routeExecutor(cfg treasury.Config, base treasury.Chain, closeFn func()) (tr
 	if cfg.Mode != "live" || cfg.Executor == "raw-key" || cfg.Executor == "" {
 		return treasury.TagChain(base, product), closeFn, nil
 	}
-	gas := treasury.WeiString(cfg.Gas.MaxFeePerGasGwei)
-	priority := treasury.WeiString(cfg.Gas.MaxPriorityFeePerGasGwei)
+	fee := circleFee(cfg)
 	switch cfg.Executor {
 	case "circle-wallets":
 		client, err := walletsClient(cfg)
@@ -202,7 +231,7 @@ func routeExecutor(cfg treasury.Config, base treasury.Chain, closeFn func()) (tr
 			closeFn()
 			return nil, nil, err
 		}
-		return treasury.NewWalletsChain(base, client, cfg.Vault, cfg.Circle.Blockchain, payWallet, ownerWallet, gas, priority), closeFn, nil
+		return treasury.NewWalletsChain(base, client, cfg.Vault, cfg.Circle.Blockchain, payWallet, ownerWallet, fee), closeFn, nil
 	case "circle-agent":
 		payAddress, err := treasury.LoadSecret(cfg.Circle.AgentAddressEnv, "")
 		if err != nil {
@@ -259,11 +288,34 @@ func (s stubAdvisor) Advise(context.Context, treasury.Decision) (treasury.Advice
 	return treasury.Advice{Note: "llm configured; stub does not override hard limits"}, nil
 }
 
-func notifier(cfg treasury.Config) treasury.Notifier {
-	if cfg.Notify.Driver == "telegram" {
-		return treasury.TelegramNotifier{}
+func circleFee(cfg treasury.Config) treasury.CircleFee {
+	if cfg.Circle.ExplicitGas {
+		return treasury.CircleFee{
+			Explicit:    true,
+			MaxFee:      strconv.FormatInt(cfg.Gas.MaxFeePerGasGwei, 10),
+			PriorityFee: strconv.FormatInt(cfg.Gas.MaxPriorityFeePerGasGwei, 10),
+			GasLimit:    strconv.FormatUint(cfg.Gas.GasLimit, 10),
+		}
 	}
-	return &treasury.LogNotifier{}
+	return treasury.CircleFee{Level: cfg.Circle.FeeLevel}
+}
+
+func notifier(cfg treasury.Config) (treasury.Notifier, error) {
+	if cfg.Notify.Driver != "telegram" {
+		return &treasury.LogNotifier{}, nil
+	}
+	token, err := treasury.LoadSecret(cfg.Notify.TokenEnv, cfg.Notify.TokenFile)
+	if err != nil {
+		return nil, err
+	}
+	chat, err := treasury.LoadSecret(cfg.Notify.ChatEnv, cfg.Notify.ChatFile)
+	if err != nil {
+		return nil, err
+	}
+	if token == "" || chat == "" {
+		return treasury.NopNotifier{}, nil
+	}
+	return treasury.TelegramNotifier{Token: token, ChatID: chat}, nil
 }
 
 func loadLastPaid() (map[string]time.Time, error) {
@@ -316,14 +368,15 @@ func unreconciledManual() ([]treasury.Inflow, []string, error) {
 	return inflows, codes, nil
 }
 
-func persist(report treasury.Report, manualCodes []string) error {
+func persist(cfg treasury.Config, report treasury.Report, manualCodes []string) error {
 	for name, cat := range report.Categories {
 		if err := models.SaveSpendCategory(name, name, treasury.FormatUSDC(cat.Budget), treasury.FormatUSDC(cat.PerTxCap), treasury.FormatUSDC(cat.Spent), treasury.FormatUSDC(cat.Remaining), int64(cat.PeriodSeconds), cat.Enabled); err != nil {
 			return err
 		}
+		committed := committedPayeeTimes(report)
 		for addr, allowed := range cat.Payees {
 			last := ""
-			if ts, ok := report.PayeePaidAt[addr]; ok && !ts.IsZero() {
+			if ts, ok := committed[treasury.NormalizeAddress(addr)]; ok && !ts.IsZero() {
 				last = ts.UTC().Format(time.RFC3339)
 			}
 			if err := models.SavePayee(name, addr, allowed, last); err != nil {
@@ -390,7 +443,7 @@ func persist(report treasury.Report, manualCodes []string) error {
 		if err := models.UpdatePayableState(d.PayableID, state); err != nil {
 			return err
 		}
-		if d.Action == treasury.ActionEscalate {
+		if d.Action == treasury.ActionEscalate && !dryRunOutcome(d.Outcome) {
 			code := d.DecisionHash
 			req := d.RequestID
 			if req == "" {
@@ -410,7 +463,37 @@ func persist(report treasury.Report, manualCodes []string) error {
 	cycle.SurplusUnits = treasury.FormatUSDC(report.Liquidity.Surplus)
 	cycle.ObservedAt = report.ObservedAt.Format(time.RFC3339)
 	cycle.CircleProduct = cfgProduct(report)
-	return models.InsertCycle(cycle)
+	if err := models.InsertCycle(cycle); err != nil {
+		return err
+	}
+	if cfg.ChainDriver == "mock" {
+		if err := saveMockState(mockStatePath(cfg), report); err != nil {
+			return err
+		}
+	}
+	if cfg.ChainDriver == "rpc" && report.Block > 0 {
+		if err := treasury.SaveScanCursor(cfg.ScanCursor, cfg.Vault, report.Block); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func committedPayeeTimes(report treasury.Report) map[string]time.Time {
+	out := map[string]time.Time{}
+	for _, d := range report.Decisions {
+		switch d.Outcome {
+		case "paid", "simulated_paid", "circle_confirmed":
+			if ts, ok := report.PayeePaidAt[d.Payee]; ok {
+				out[treasury.NormalizeAddress(d.Payee)] = ts
+			}
+		}
+	}
+	return out
+}
+
+func dryRunOutcome(outcome string) bool {
+	return len(outcome) >= 7 && outcome[:7] == "dry_run"
 }
 
 func cfgProduct(report treasury.Report) string {
@@ -425,13 +508,13 @@ func cfgProduct(report treasury.Report) string {
 func payableState(d treasury.Decision) string {
 	switch d.Action {
 	case treasury.ActionPay:
-		if d.Outcome == "simulated_paid" || d.Outcome == "paid" || d.Outcome == "dry_run_paid" || d.Outcome == "circle_confirmed" {
+		if d.Outcome == "simulated_paid" || d.Outcome == "paid" || d.Outcome == "circle_confirmed" {
 			return "paid"
 		}
 	case treasury.ActionDefer:
 		return "deferred"
 	case treasury.ActionEscalate:
-		if d.Outcome == "error" || d.Outcome == "agent_key_required" {
+		if d.Outcome == "error" || d.Outcome == "agent_key_required" || dryRunOutcome(d.Outcome) {
 			return ""
 		}
 		return "escalated"

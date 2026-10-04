@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/digitalwayhk/core/pkg/server/router"
 	"github.com/digitalwayhk/core/pkg/server/run"
 	operatorsvc "github.com/vincent-lxc/pulse-operator/operator"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
+	"github.com/vincent-lxc/pulse-operator/operator/treasury"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -28,7 +30,34 @@ func main() {
 	}
 	server := run.NewWebServer()
 	server.AddIService(&operatorsvc.Service{})
+	applyListenHost(listenHost())
 	server.Start()
+}
+
+func listenHost() string {
+	if host := os.Getenv("OPERATOR_BIND"); host != "" {
+		return host
+	}
+	path := os.Getenv("OPERATOR_CONFIG")
+	if path != "" {
+		if cfg, err := treasury.LoadConfig(path); err == nil && cfg.Listen != "" {
+			return cfg.Listen
+		}
+	}
+	return "127.0.0.1"
+}
+
+func applyListenHost(host string) {
+	local := host == "127.0.0.1" || host == "localhost" || host == "::1"
+	for _, sc := range router.GetContexts() {
+		if sc == nil || sc.Config == nil {
+			continue
+		}
+		sc.Config.Host = host
+		if local {
+			sc.Config.IsLoaclVisit = true
+		}
+	}
 }
 
 func runDemo(args []string) error {

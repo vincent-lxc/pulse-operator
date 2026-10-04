@@ -92,16 +92,28 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 		return Report{}, err
 	}
 	report := Report{
-		RunID:       runID,
-		ObservedAt:  in.Policy.Now,
-		Balance:     unitsOrZero(snap.Balance),
-		Inflows:     append([]Inflow(nil), snap.Inflows...),
-		Categories:  snap.Categories,
-		PayeePaidAt: lastPaid,
+		RunID:            runID,
+		ObservedAt:       in.Policy.Now,
+		Balance:          unitsOrZero(snap.Balance),
+		OpeningBalance:   new(big.Int).Set(unitsOrZero(snap.Balance)),
+		Block:            snap.Block,
+		Inflows:          append([]Inflow(nil), snap.Inflows...),
+		OpeningLiquidity: pre,
+		Categories:       snap.Categories,
+		PayeePaidAt:      lastPaid,
 	}
 	var stillDue = new(big.Int).Set(obligated)
+	spentThisRun := big.NewInt(0)
 	for _, p := range open {
 		d := DecidePayable(p, snap, in.Policy, lastPaid)
+		if d.Action == ActionPay && in.Policy.MaxSpendPerRun != nil {
+			next := new(big.Int).Add(spentThisRun, unitsOrZero(d.Amount))
+			if next.Cmp(in.Policy.MaxSpendPerRun) > 0 {
+				d = deferDecision(d, ReasonMaxSpend, fmt.Sprintf("paying %s would put this run at %s, above max spend %s", FormatUSDC(d.Amount), FormatUSDC(next), FormatUSDC(in.Policy.MaxSpendPerRun)))
+			} else {
+				spentThisRun = next
+			}
+		}
 		advice, adviseErr := in.Advisor.Advise(ctx, d)
 		d = Annotate(d, advice, adviseErr)
 		hash, err := seal(in.Policy, d)
@@ -136,7 +148,7 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 				if res.Product != "" {
 					d.Product = res.Product
 				}
-				if res.Status == "simulated_paid" || res.Status == "paid" || res.Status == "circle_confirmed" {
+				if res.Status == "simulated_paid" || res.Status == "paid" || res.Status == "circle_confirmed" || res.Status == "dry_run_paid" {
 					ApplyPay(&snap, d.Category, d.Amount)
 					lastPaid[d.Payee] = in.Policy.Now
 				}
@@ -145,7 +157,7 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 			d.Outcome = "recorded"
 		}
 		if d.Action == ActionEscalate {
-			_ = in.Notifier.Notify(ctx, Notice{Kind: "escalation", Text: fmt.Sprintf("%s %s %s (%s)", d.PayableID, FormatUSDC(d.Amount), d.ReasonCode, d.Reason)})
+			_ = in.Notifier.Notify(ctx, Notice{Kind: "escalation", Text: escalationText(in.Policy.ChainID, d)})
 		}
 		if d.Action != ActionPay && DueWithin(p, in.Policy.Now, in.Policy.Horizon) {
 			stillDue.Add(stillDue, unitsOrZero(d.Amount))

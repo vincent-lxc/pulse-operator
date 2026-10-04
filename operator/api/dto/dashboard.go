@@ -41,3 +41,11 @@ type RunOnceResponse struct {
 	RunID     string `json:"runID" desc:"运行编号"`
 	Decisions int    `json:"decisions" desc:"决策条数"`
 }
+
+// ApprovalActionResponse 是 owner approve 或 reject 的回执。
+type ApprovalActionResponse struct {
+	RequestID string `json:"requestID" desc:"链上请求号"`
+	Status    string `json:"status" desc:"结果"`
+	TxHash    string `json:"txHash" desc:"交易哈希"`
+	Circle    string `json:"circle" desc:"Circle 产品"`
+}

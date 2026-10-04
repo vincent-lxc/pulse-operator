@@ -77,6 +77,25 @@ func ListApprovals() ([]*Approval, error) {
 	return rows, err
 }
 
+// FindApprovalByRequest 按链上请求号查找审批。优先返回仍 pending 的一行。
+func FindApprovalByRequest(requestID string) (*Approval, error) {
+	rows, err := ListApprovals()
+	if err != nil {
+		return nil, err
+	}
+	var fallback *Approval
+	for _, row := range rows {
+		if row.RequestID != requestID {
+			continue
+		}
+		if row.State == "pending" {
+			return row, nil
+		}
+		fallback = row
+	}
+	return fallback, nil
+}
+
 func findApproval(code string) (*Approval, error) {
 	if err := ensureModel(NewApproval()); err != nil {
 		return nil, err

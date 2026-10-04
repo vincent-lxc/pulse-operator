@@ -4,10 +4,10 @@ package treasury
 import (
 	"context"
 	"fmt"
-	"math/big"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // TagChain 给已有执行结果补上产品标签。dry-run 用它，不访问 Circle。
@@ -41,6 +41,30 @@ func (c tagChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, error)
 	return res, err
 }
 
+func (c tagChain) Approve(ctx context.Context, requestID string) (ExecResult, error) {
+	inner, ok := c.inner.(ApprovalSender)
+	if !ok {
+		return ExecResult{Product: c.product}, fmt.Errorf("this chain cannot approve requests")
+	}
+	res, err := inner.Approve(ctx, requestID)
+	if res.Product == "" {
+		res.Product = c.product
+	}
+	return res, err
+}
+
+func (c tagChain) Reject(ctx context.Context, requestID string) (ExecResult, error) {
+	inner, ok := c.inner.(ApprovalSender)
+	if !ok {
+		return ExecResult{Product: c.product}, fmt.Errorf("this chain cannot reject requests")
+	}
+	res, err := inner.Reject(ctx, requestID)
+	if res.Product == "" {
+		res.Product = c.product
+	}
+	return res, err
+}
+
 // PayExplainer 能在交易上链后区分直接支付和待审批。
 type PayExplainer interface {
 	ExplainPay(ctx context.Context, txHash string, decision common.Hash) (status, requestID string, err error)
@@ -53,15 +77,14 @@ type walletsChain struct {
 	blockchain  string
 	payWallet   string
 	sweepWallet string
-	gasPrice    string
-	priorityFee string
+	fee         CircleFee
 }
 
-// NewWalletsChain 用 Circle Developer-Controlled Wallets 发送 pay 和 sweep。
-func NewWalletsChain(observe Chain, client *WalletsClient, vault, blockchain, payWallet, sweepWallet, gasPrice, priorityFee string) Chain {
+// NewWalletsChain 用 Circle Developer-Controlled Wallets 发送 pay、sweep、approve 和 reject。
+func NewWalletsChain(observe Chain, client *WalletsClient, vault, blockchain, payWallet, sweepWallet string, fee CircleFee) Chain {
 	return walletsChain{
 		observe: observe, client: client, vault: vault, blockchain: blockchain,
-		payWallet: payWallet, sweepWallet: sweepWallet, gasPrice: gasPrice, priorityFee: priorityFee,
+		payWallet: payWallet, sweepWallet: sweepWallet, fee: fee,
 	}
 }
 
@@ -84,8 +107,7 @@ func (c walletsChain) Pay(ctx context.Context, call PayCall) (ExecResult, error)
 		Contract:       c.vault,
 		Signature:      "pay(bytes32,address,uint256,bytes32)",
 		Params:         params,
-		GasPrice:       c.gasPrice,
-		PriorityFee:    c.priorityFee,
+		Fee:            c.fee,
 	})
 	if err != nil {
 		return ExecResult{Product: ProductWallets}, err
@@ -104,14 +126,45 @@ func (c walletsChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, er
 		Contract:       c.vault,
 		Signature:      "sweepToReserve(uint256,bytes32)",
 		Params:         SweepArguments(call),
-		GasPrice:       c.gasPrice,
-		PriorityFee:    c.priorityFee,
+		Fee:            c.fee,
 	})
 	if err != nil {
 		return ExecResult{Product: ProductWallets}, err
 	}
 	res := explain(ctx, c.observe, tx.TxHash, call.DecisionHash, ProductWallets, true)
 	return res, nil
+}
+
+// Approve 用 owner 钱包调用 PolicyVault.approve。
+func (c walletsChain) Approve(ctx context.Context, requestID string) (ExecResult, error) {
+	return c.ownerContract(ctx, requestID, "approve", "approve(uint256)", "approved")
+}
+
+// Reject 用 owner 钱包调用 PolicyVault.reject。
+func (c walletsChain) Reject(ctx context.Context, requestID string) (ExecResult, error) {
+	return c.ownerContract(ctx, requestID, "reject", "reject(uint256)", "rejected")
+}
+
+func (c walletsChain) ownerContract(ctx context.Context, requestID, action, signature, status string) (ExecResult, error) {
+	if c.sweepWallet == "" {
+		return ExecResult{Product: ProductWallets}, ErrOwnerKeyRequired
+	}
+	if _, err := ParseRequestID(requestID); err != nil {
+		return ExecResult{Product: ProductWallets}, err
+	}
+	tx, err := c.client.Execute(ctx, ContractExecution{
+		IdempotencyKey: IdempotencyFromHash(OwnerActionHash(action, requestID)),
+		WalletID:       c.sweepWallet,
+		Blockchain:     c.blockchain,
+		Contract:       c.vault,
+		Signature:      signature,
+		Params:         []string{strings.TrimSpace(requestID)},
+		Fee:            c.fee,
+	})
+	if err != nil {
+		return ExecResult{Product: ProductWallets}, err
+	}
+	return ExecResult{Status: status, TxHash: tx.TxHash, RequestID: strings.TrimSpace(requestID), Product: ProductWallets}, nil
 }
 
 func explain(ctx context.Context, observe Chain, txHash string, decision common.Hash, product string, sweep bool) ExecResult {
@@ -130,12 +183,10 @@ func explain(ctx context.Context, observe Chain, txHash string, decision common.
 	return res
 }
 
-// WeiString 把 gwei 换成 Circle gasPrice 用的十进制 wei。
-func WeiString(gwei int64) string {
-	if gwei <= 0 {
-		return ""
-	}
-	return new(big.Int).Mul(big.NewInt(gwei), big.NewInt(1_000_000_000)).String()
+// OwnerActionHash 给 approve/reject 一个稳定的幂等键材料。
+func OwnerActionHash(action, requestID string) common.Hash {
+	sum := crypto.Keccak256([]byte("pulse-operator/" + action + "/v1:" + strings.TrimSpace(requestID)))
+	return common.BytesToHash(sum)
 }
 
 // TagProduct 在产品标签为空时填上默认值。

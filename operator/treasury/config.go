@@ -3,7 +3,9 @@ package treasury
 
 import (
 	"fmt"
+	"math/big"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -11,29 +13,36 @@ import (
 
 // Config 是 dry-run 与 live 共用的配置。
 type Config struct {
-	Mode              string        `yaml:"mode"`
-	AgentID           string        `yaml:"agentID"`
-	ChainID           string        `yaml:"chainID"`
-	Vault             string        `yaml:"vault"`
-	Agent             string        `yaml:"agent"`
-	USDC              string        `yaml:"usdc"`
-	ChainDriver       string        `yaml:"chainDriver"`
-	VaultFixture      string        `yaml:"vaultFixture"`
-	Ledger            string        `yaml:"ledger"`
-	AuditLog          string        `yaml:"auditLog"`
-	FromBlock         uint64        `yaml:"fromBlock"`
-	DueHorizon        time.Duration `yaml:"dueHorizon"`
-	Cooldown          time.Duration `yaml:"cooldown"`
-	ReserveFloorUSDC  string        `yaml:"reserveFloorUSDC"`
-	ReserveTargetUSDC string        `yaml:"reserveTargetUSDC"`
-	Clock             string        `yaml:"clock"`
-	LoopInterval      time.Duration `yaml:"loopInterval"`
-	LLM               LLMConfig     `yaml:"llm"`
-	Notify            NotifyConfig  `yaml:"notify"`
-	Secrets           SecretConfig  `yaml:"secrets"`
-	Gas               GasConfig     `yaml:"gas"`
-	Executor          string        `yaml:"executor"`
-	Circle            CircleConfig  `yaml:"circle"`
+	Mode               string        `yaml:"mode"`
+	AgentID            string        `yaml:"agentID"`
+	ChainID            string        `yaml:"chainID"`
+	Vault              string        `yaml:"vault"`
+	Agent              string        `yaml:"agent"`
+	USDC               string        `yaml:"usdc"`
+	ChainDriver        string        `yaml:"chainDriver"`
+	VaultFixture       string        `yaml:"vaultFixture"`
+	Ledger             string        `yaml:"ledger"`
+	AuditLog           string        `yaml:"auditLog"`
+	FromBlock          uint64        `yaml:"fromBlock"`
+	DueHorizon         time.Duration `yaml:"dueHorizon"`
+	Cooldown           time.Duration `yaml:"cooldown"`
+	ReserveFloorUSDC   string        `yaml:"reserveFloorUSDC"`
+	ReserveTargetUSDC  string        `yaml:"reserveTargetUSDC"`
+	Clock              string        `yaml:"clock"`
+	Listen             string        `yaml:"listen"`
+	LoopEnabled        bool          `yaml:"loopEnabled"`
+	LoopInterval       time.Duration `yaml:"loopInterval"`
+	MaxSpendPerRunUSDC string        `yaml:"maxSpendPerRunUSDC"`
+	LogLookback        uint64        `yaml:"logLookback"`
+	LogChunk           uint64        `yaml:"logChunk"`
+	FullLogScan        bool          `yaml:"fullLogScan"`
+	ScanCursor         string        `yaml:"scanCursor"`
+	LLM                LLMConfig     `yaml:"llm"`
+	Notify             NotifyConfig  `yaml:"notify"`
+	Secrets            SecretConfig  `yaml:"secrets"`
+	Gas                GasConfig     `yaml:"gas"`
+	Executor           string        `yaml:"executor"`
+	Circle             CircleConfig  `yaml:"circle"`
 }
 
 // CircleConfig 选择 Circle 产品。值里只有环境变量名和文件路径，没有密钥。
@@ -52,6 +61,8 @@ type CircleConfig struct {
 	OwnerWalletIDFile string     `yaml:"ownerWalletIDFile"`
 	AgentAddressEnv   string     `yaml:"agentAddressEnv"`
 	OwnerAddressEnv   string     `yaml:"ownerAddressEnv"`
+	FeeLevel          string     `yaml:"feeLevel"`
+	ExplicitGas       bool       `yaml:"explicitGas"`
 	CCTP              CCTPConfig `yaml:"cctp"`
 }
 
@@ -73,9 +84,13 @@ type LLMConfig struct {
 	URLEnv  string `yaml:"urlEnv"`
 }
 
-// NotifyConfig 选择通知实现。
+// NotifyConfig 选择通知实现。密钥只写环境变量名或 0600 文件路径。
 type NotifyConfig struct {
-	Driver string `yaml:"driver"`
+	Driver    string `yaml:"driver"`
+	TokenEnv  string `yaml:"tokenEnv"`
+	TokenFile string `yaml:"tokenFile"`
+	ChatEnv   string `yaml:"chatEnv"`
+	ChatFile  string `yaml:"chatFile"`
 }
 
 // SecretConfig 只保存环境变量名和文件路径。
@@ -87,10 +102,12 @@ type SecretConfig struct {
 	OwnerKeyFile string `yaml:"ownerKeyFile"`
 }
 
-// GasConfig 是 Arc 上以 USDC 支付的 gas 上限，单位 gwei。
+// GasConfig 是 Arc 上以 USDC 支付的 gas 上限。
+// maxFee 和 priorityFee 的单位是 gwei。gasLimit 是 gas 单位，只在 Circle explicitGas 时发送。
 type GasConfig struct {
-	MaxFeePerGasGwei         int64 `yaml:"maxFeePerGasGwei"`
-	MaxPriorityFeePerGasGwei int64 `yaml:"maxPriorityFeePerGasGwei"`
+	MaxFeePerGasGwei         int64  `yaml:"maxFeePerGasGwei"`
+	MaxPriorityFeePerGasGwei int64  `yaml:"maxPriorityFeePerGasGwei"`
+	GasLimit                 uint64 `yaml:"gasLimit"`
 }
 
 // LoadConfig 从 YAML 读取配置并填入默认值。
@@ -124,8 +141,17 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Secrets.OwnerKeyEnv == "" {
 		cfg.Secrets.OwnerKeyEnv = "OWNER_PRIVATE_KEY"
 	}
-	if cfg.FromBlock == 0 {
-		cfg.FromBlock = 64231944
+	if cfg.LogChunk == 0 {
+		cfg.LogChunk = 9000
+	}
+	if cfg.LogLookback == 0 && !cfg.FullLogScan {
+		cfg.LogLookback = 9000
+	}
+	if cfg.ScanCursor == "" {
+		cfg.ScanCursor = "data/log-cursor.json"
+	}
+	if cfg.Listen == "" {
+		cfg.Listen = "127.0.0.1"
 	}
 	if cfg.Executor == "" {
 		cfg.Executor = "raw-key"
@@ -159,6 +185,15 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.Circle.Blockchain == "" {
 		cfg.Circle.Blockchain = BlockchainForChain(cfg.ChainID)
+	}
+	if cfg.Circle.FeeLevel == "" {
+		cfg.Circle.FeeLevel = "MEDIUM"
+	}
+	if cfg.Notify.TokenEnv == "" {
+		cfg.Notify.TokenEnv = "TELEGRAM_BOT_TOKEN"
+	}
+	if cfg.Notify.ChatEnv == "" {
+		cfg.Notify.ChatEnv = "TELEGRAM_CHAT_ID"
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -196,6 +231,23 @@ func (c Config) Validate() error {
 	if c.Gas.MaxFeePerGasGwei != 0 && c.Gas.MaxFeePerGasGwei < 20 {
 		return fmt.Errorf("maxFeePerGasGwei must be >= 20 on Arc")
 	}
+	if c.Circle.ExplicitGas {
+		if c.Gas.GasLimit == 0 {
+			return fmt.Errorf("circle explicitGas requires gas.gasLimit")
+		}
+		if c.Gas.MaxPriorityFeePerGasGwei <= 0 {
+			return fmt.Errorf("circle explicitGas requires maxPriorityFeePerGasGwei")
+		}
+	}
+	if c.LoopEnabled {
+		if c.LoopInterval <= 0 {
+			return fmt.Errorf("loopEnabled requires loopInterval > 0")
+		}
+		max, err := ParseUSDCAllowZero(c.MaxSpendPerRunUSDC)
+		if err != nil || max == nil || max.Sign() <= 0 {
+			return fmt.Errorf("loopEnabled requires maxSpendPerRunUSDC > 0")
+		}
+	}
 	if c.Vault == "" || c.Agent == "" || c.ChainID == "" {
 		return fmt.Errorf("vault, agent and chainID are required")
 	}
@@ -231,15 +283,23 @@ func (c Config) PolicyFrom(now time.Time) (Policy, error) {
 	if agentID == "" {
 		agentID = "pulse-operator"
 	}
+	var maxSpend *big.Int
+	if strings.TrimSpace(c.MaxSpendPerRunUSDC) != "" {
+		maxSpend, err = ParseUSDCAllowZero(c.MaxSpendPerRunUSDC)
+		if err != nil {
+			return Policy{}, fmt.Errorf("maxSpendPerRunUSDC: %w", err)
+		}
+	}
 	return Policy{
-		AgentID:       agentID,
-		ChainID:       c.ChainID,
-		Vault:         NormalizeAddress(c.Vault),
-		ReserveFloor:  floor,
-		ReserveTarget: target,
-		Horizon:       horizon,
-		Cooldown:      c.Cooldown,
-		Now:           now.UTC(),
+		AgentID:        agentID,
+		ChainID:        c.ChainID,
+		Vault:          NormalizeAddress(c.Vault),
+		ReserveFloor:   floor,
+		ReserveTarget:  target,
+		Horizon:        horizon,
+		Cooldown:       c.Cooldown,
+		Now:            now.UTC(),
+		MaxSpendPerRun: maxSpend,
 	}, nil
 }
 

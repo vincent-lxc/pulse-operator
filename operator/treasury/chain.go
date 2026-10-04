@@ -39,3 +39,9 @@ type Chain interface {
 	Pay(ctx context.Context, call PayCall) (ExecResult, error)
 	Sweep(ctx context.Context, call SweepCall) (ExecResult, error)
 }
+
+// ApprovalSender 由 owner 签名 approve 或 reject。
+type ApprovalSender interface {
+	Approve(ctx context.Context, requestID string) (ExecResult, error)
+	Reject(ctx context.Context, requestID string) (ExecResult, error)
+}

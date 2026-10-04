@@ -38,6 +38,8 @@ const (
 	ReasonSurplus = "surplus_above_target"
 	// ReasonNoSurplus 表示没有可划转的超额。
 	ReasonNoSurplus = "no_surplus"
+	// ReasonMaxSpend 表示本轮自主支付已经达到 maxSpendPerRun。
+	ReasonMaxSpend = "max_spend_per_run"
 )
 
 // Category 是从 PolicyVault 读到的品类预算快照。
@@ -97,14 +99,15 @@ type Payable struct {
 
 // Policy 是代码里的硬规则参数，LLM 不能放宽它们。
 type Policy struct {
-	AgentID       string
-	ChainID       string
-	Vault         string
-	ReserveFloor  *big.Int
-	ReserveTarget *big.Int
-	Horizon       time.Duration
-	Cooldown      time.Duration
-	Now           time.Time
+	AgentID        string
+	ChainID        string
+	Vault          string
+	ReserveFloor   *big.Int
+	ReserveTarget  *big.Int
+	Horizon        time.Duration
+	Cooldown       time.Duration
+	Now            time.Time
+	MaxSpendPerRun *big.Int
 }
 
 // Decision 是一条机器可读的处置结果。
@@ -144,13 +147,16 @@ type Notice struct {
 
 // Report 是一轮循环的完整结果。
 type Report struct {
-	RunID       string
-	ObservedAt  time.Time
-	Balance     *big.Int
-	Inflows     []Inflow
-	Liquidity   Liquidity
-	Decisions   []Decision
-	Notices     []Notice
-	Categories  map[string]Category
-	PayeePaidAt map[string]time.Time
+	RunID            string
+	ObservedAt       time.Time
+	Balance          *big.Int
+	OpeningBalance   *big.Int
+	Block            uint64
+	Inflows          []Inflow
+	Liquidity        Liquidity
+	OpeningLiquidity Liquidity
+	Decisions        []Decision
+	Notices          []Notice
+	Categories       map[string]Category
+	PayeePaidAt      map[string]time.Time
 }

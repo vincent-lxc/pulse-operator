@@ -4,6 +4,7 @@ package treasury
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -24,6 +25,11 @@ func NewMockChain(snap Snapshot) *MockChain {
 // Observe 返回当前模拟状态。
 func (m *MockChain) Observe(context.Context) (Snapshot, error) {
 	return cloneSnapshot(m.snap), nil
+}
+
+// Snapshot 返回调用后的模拟状态，供 dry-run 在进程外延续。
+func (m *MockChain) Snapshot() Snapshot {
+	return cloneSnapshot(m.snap)
 }
 
 // Pay 模拟自主支付或超限升级。不允许的收款方返回错误，不产生状态。
@@ -91,6 +97,41 @@ func (m *MockChain) Sweep(_ context.Context, call SweepCall) (ExecResult, error)
 		TxHash:   mockTx(call.DecisionHash),
 		Calldata: "0x" + fmt.Sprintf("%x", data),
 	}, nil
+}
+
+// Approve 在内存里通过一笔待审批并扣减余额。
+func (m *MockChain) Approve(_ context.Context, requestID string) (ExecResult, error) {
+	return m.settleRequest(requestID, true)
+}
+
+// Reject 在内存里拒绝一笔待审批，不移动资金。
+func (m *MockChain) Reject(_ context.Context, requestID string) (ExecResult, error) {
+	return m.settleRequest(requestID, false)
+}
+
+func (m *MockChain) settleRequest(requestID string, approve bool) (ExecResult, error) {
+	id := strings.TrimSpace(requestID)
+	for i := range m.snap.Pending {
+		item := &m.snap.Pending[i]
+		if item.RequestID != id {
+			continue
+		}
+		if item.Status != "pending" {
+			return ExecResult{}, fmt.Errorf("request %s is %s", id, item.Status)
+		}
+		hash := common.HexToHash(item.DecisionHash)
+		if hash == (common.Hash{}) {
+			hash = OwnerActionHash(map[bool]string{true: "approve", false: "reject"}[approve], id)
+		}
+		if approve {
+			item.Status = "approved"
+			ApplyPay(&m.snap, item.Category, item.Amount)
+			return ExecResult{Status: "simulated_approved", TxHash: mockTx(hash), RequestID: id}, nil
+		}
+		item.Status = "rejected"
+		return ExecResult{Status: "simulated_rejected", TxHash: mockTx(hash), RequestID: id}, nil
+	}
+	return ExecResult{}, fmt.Errorf("request %s is not pending", id)
 }
 
 func mockTx(decision common.Hash) string {

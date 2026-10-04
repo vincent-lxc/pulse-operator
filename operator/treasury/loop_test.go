@@ -71,6 +71,98 @@ func TestDryRunSampleProducesPayDeferSweepEscalation(t *testing.T) {
 	if FormatUSDC(sum) != "5.000000" {
 		t.Fatalf("inflow sum %s", FormatUSDC(sum))
 	}
+	if FormatUSDC(report.OpeningBalance) != "20.000000" || FormatUSDC(report.OpeningLiquidity.Surplus) != "4.400000" {
+		t.Fatalf("opening balance %s surplus %s", FormatUSDC(report.OpeningBalance), FormatUSDC(report.OpeningLiquidity.Surplus))
+	}
+	if FormatUSDC(report.Balance) != "13.600000" {
+		t.Fatalf("closing balance %s", FormatUSDC(report.Balance))
+	}
+}
+
+func TestDryRunPaidUpdatesWorkingBalance(t *testing.T) {
+	payee := NormalizeAddress("0x2222222222222222222222222222222222222222")
+	snap := Snapshot{
+		Balance: big.NewInt(20_000000),
+		Reserve: "0x1111111111111111111111111111111111111111",
+		Categories: map[string]Category{
+			"infra": {
+				Name: "infra", Enabled: true,
+				Budget: big.NewInt(50_000000), PerTxCap: big.NewInt(10_000000), Remaining: big.NewInt(50_000000),
+				Payees: map[string]bool{payee: true},
+			},
+		},
+	}
+	policy := Policy{
+		AgentID: "pulse-operator", ChainID: "5042002", Vault: "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01",
+		ReserveFloor: big.NewInt(8_000000), ReserveTarget: big.NewInt(10_000000),
+		Horizon: 168 * time.Hour, Now: time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC),
+	}
+	report, err := Run(context.Background(), LoopInput{
+		Policy: policy,
+		Payables: []Payable{{
+			ID: "one", Category: "infra", Payee: payee, Amount: big.NewInt(2_000000),
+			Due: policy.Now.Add(-time.Hour),
+		}},
+		Chain: &statusChain{snap: snap, payStatus: "dry_run_paid"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if FormatUSDC(report.Decisions[0].Amount) != "2.000000" || report.Decisions[0].Outcome != "dry_run_paid" {
+		t.Fatalf("pay %+v", report.Decisions[0])
+	}
+	sweep := report.Decisions[len(report.Decisions)-1]
+	if sweep.Action != ActionSweep || FormatUSDC(sweep.Amount) != "8.000000" {
+		t.Fatalf("sweep %+v amount %s", sweep, FormatUSDC(sweep.Amount))
+	}
+}
+
+func TestMaxSpendPerRunDefers(t *testing.T) {
+	payee := NormalizeAddress("0x2222222222222222222222222222222222222222")
+	snap := Snapshot{
+		Balance: big.NewInt(20_000000),
+		Reserve: "0x1111111111111111111111111111111111111111",
+		Categories: map[string]Category{
+			"infra": {
+				Name: "infra", Enabled: true,
+				Budget: big.NewInt(50_000000), PerTxCap: big.NewInt(10_000000), Remaining: big.NewInt(50_000000),
+				Payees: map[string]bool{payee: true},
+			},
+		},
+	}
+	policy := Policy{
+		AgentID: "pulse-operator", ChainID: "5042002", Vault: "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01",
+		ReserveFloor: big.NewInt(1), ReserveTarget: big.NewInt(1),
+		Horizon: 168 * time.Hour, Now: time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC),
+		MaxSpendPerRun: big.NewInt(1_000000),
+	}
+	report, err := Run(context.Background(), LoopInput{
+		Policy: policy,
+		Payables: []Payable{{
+			ID: "big", Category: "infra", Payee: payee, Amount: big.NewInt(2_000000),
+			Due: policy.Now.Add(-time.Hour),
+		}},
+		Chain: NewMockChain(snap),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Decisions[0].Action != ActionDefer || report.Decisions[0].ReasonCode != ReasonMaxSpend {
+		t.Fatalf("%+v", report.Decisions[0])
+	}
+}
+
+type statusChain struct {
+	snap      Snapshot
+	payStatus string
+}
+
+func (s *statusChain) Observe(context.Context) (Snapshot, error) { return cloneSnapshot(s.snap), nil }
+func (s *statusChain) Pay(context.Context, PayCall) (ExecResult, error) {
+	return ExecResult{Status: s.payStatus}, nil
+}
+func (s *statusChain) Sweep(context.Context, SweepCall) (ExecResult, error) {
+	return ExecResult{Status: "dry_run"}, nil
 }
 
 func moduleRoot(t *testing.T) string {

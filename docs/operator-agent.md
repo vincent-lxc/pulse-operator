@@ -9,9 +9,9 @@ The treasury loop lives in `operator/` and is a [digitalwayhk/core](https://gith
 | Revenue in | Read USDC `Transfer` logs (`local:rpc`), confirm CCTP v2 burns with Iris (`circle:cctp`), accept Gateway webhooks (`circle:gateway`), and accept `POST /api/operator/recordrevenue` (`local:http`). |
 | Liquidity | Compare balance, due-but-unpaid obligations inside `dueHorizon`, reserve floor, and reserve target. Category budget left is read from the vault snapshot. |
 | Decide | For each open payable: `pay`, `defer`, `escalate_to_human`, then one cycle-level `sweep_to_reserve` when surplus remains. Reason codes are stable strings (`within_policy`, `cooldown`, `not_due`, `reserve_floor`, `over_tx_cap`, `over_budget`, `payee_not_allowlisted`, `surplus_above_target`). |
-| Execute | `pay(category, payee, amount, decisionHash)`. `executor: raw-key` signs with go-ethereum. `executor: circle-wallets` sends the same call through Circle Developer-Controlled Wallets. `executor: circle-agent` shells out to `circle wallet execute`. Over cap or over budget still submits `pay` so the vault opens an `ApprovalRequest`. A payee that is not allowlisted is not submitted. `sweepToReserve` is `onlyOwner`: raw-key needs `OWNER_PRIVATE_KEY`; Circle wallets need `CIRCLE_OWNER_WALLET_ID`; the agent CLI needs `CIRCLE_OWNER_ADDRESS`. Missing that signer records `owner_key_required`. |
+| Execute | `pay(category, payee, amount, decisionHash)`. `executor: raw-key` signs with go-ethereum. `executor: circle-wallets` sends the same call through Circle Developer-Controlled Wallets (`feeLevel: MEDIUM` by default; optional gwei `maxFee` + `priorityFee` + `gasLimit`). `executor: circle-agent` shells out to `circle wallet execute`. Over cap or over budget still submits `pay` so the vault opens an `ApprovalRequest`. A payee that is not allowlisted is not submitted. `sweepToReserve` is `onlyOwner`: raw-key needs `OWNER_PRIVATE_KEY`; Circle wallets need `CIRCLE_OWNER_WALLET_ID`; the agent CLI needs `CIRCLE_OWNER_ADDRESS`. Missing that signer records `owner_key_required`. |
 | Record | Append-only `data/audit.jsonl`. Every line has `circle` (`circle:wallets`, `circle:agent`, `circle:cctp`, `circle:gateway`, `local:key`, or `local:rpc`). The same tag is a column on Decisions, Approvals, Revenue, and Cycles. |
-| Human above the line | Pending approvals are listed on the dashboard and in Approvals. `notify.driver: telegram` is a stub: it checks `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, then refuses to send. `driver: log` records the notice in the run output. |
+| Human above the line | Pending approvals are listed on the dashboard and in Treasury → Approvals. That view has Approve and Reject commands, and `POST /api/operator/approve` / `reject` call `PolicyVault.approve` / `reject` with the owner key or the Circle owner wallet. `notify.driver: telegram` sends when `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set (env or a 0600 file); otherwise it does nothing. `driver: log` records the notice in the run output. The notice includes the request id and, when a tx exists, an Arcscan link. |
 
 `decisionHash` is keccak256 of canonical JSON (`v`, `agent_id`, `chain_id`, `vault`, `payable_id`, `action`, `category`, `payee`, `amount_units`, `reason_code`). The hash does not include the tx hash or the outcome, so a retry of the same decision hits `decisionUsed` instead of paying twice.
 
@@ -64,7 +64,11 @@ Expected lines from `testdata/ledger.yaml` at clock `2026-10-03T12:00:00Z`, vaul
 
 The fixture also prints two inflows that are already inside the 20 USDC balance: 4.00 `circle:cctp` and 1.00 `circle:gateway`. Dry-run does not call Iris or Circle.
 
-No chain write happens. `chainDriver: mock` is the offline snapshot. `chainDriver: rpc` with `mode: dry-run` reads Arc and `eth_call`s `pay`, and does not send.
+No chain write happens. `chainDriver: mock` is the offline snapshot. A later mock run continues from `data/mock-state.json` (balance, budgets, pending approvals) so it does not sweep the same surplus again. `chainDriver: rpc` with `mode: dry-run` reads Arc and `eth_call`s `pay`. A simulated pay (`dry_run_paid`) updates the in-run balance and cooldown so the sweep amount matches a live run, and it does not mark the payable paid. An `eth_call` revert is stored on the decision. The `run` and `liquidity` lines are the observation before execution.
+
+USDC `Transfer` logs are read in chunks of `logChunk` (default 9000). The first scan is the last `logLookback` blocks unless `fullLogScan: true`. `data/log-cursor.json` stores the last scanned block. Public `https://rpc.testnet.arc.io` often returns HTTP 429; RPC calls retry with backoff. Fallback endpoint: `https://rpc.blockdaemon.testnet.arc.io`. On-chain inflows are tagged `local:rpc`.
+
+The API and gRPC processes bind to `listen` (default `127.0.0.1`). `OPERATOR_BIND` overrides it. Loopback binds also set the framework local-visit check. Core's admin view (`-view`) still listens on `:<port>` on every interface; that address is hardcoded in the framework.
 
 ## Admin view and HTTP
 
@@ -83,7 +87,7 @@ go build -o bin/pulse ./cmd/pulse
 | Framework `server` service | http://127.0.0.1:18091 |
 | Operator API | http://127.0.0.1:18092 |
 
-`-p` is the base port. Core gives DataCenterID 1 to its built-in `server` service, so that process listens on 18091. This service is registered second and listens on 18092 (`base + DataCenterID - 1`). The view process proxies `/api/*`, so the same dashboard URL also works on port 43123. gRPC follows the same split: pass `-grpc 19091` and the operator gRPC port is 19092.
+`-p` is the base port. Core gives DataCenterID 1 to its built-in `server` service, so that process listens on 18091. This service is registered second and listens on 18092 (`base + DataCenterID - 1`). The view process proxies `/api/*`, so the same dashboard URL also works on port 43123. gRPC follows the same split: pass `-grpc 19091` and the operator gRPC port is 19092. HTTP and gRPC bind to 127.0.0.1 unless `OPERATOR_BIND` or `listen` says otherwise.
 
 In the admin UI open menu management, run **更新菜单**, then open Decisions, Payables, Approvals, Revenue, Categories, Cycles. Manage routes are view and search only. The local view signs a TestToken for `platform-admin` by itself.
 
@@ -94,7 +98,17 @@ curl -s -X POST http://127.0.0.1:18092/api/operator/recordrevenue \
   -H 'Content-Type: application/json' \
   -d '{"ref":"wire-1","from":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","amount_usdc":"1.00","memo":"manual"}'
 curl -s -X POST http://127.0.0.1:18092/api/operator/runonce
+curl -s -X POST http://127.0.0.1:18092/api/operator/approve \
+  -H 'Content-Type: application/json' \
+  -d '{"request_id":"1"}'
+curl -s -X POST http://127.0.0.1:18092/api/operator/reject \
+  -H 'Content-Type: application/json' \
+  -d '{"request_id":"1"}'
 ```
+
+Approve and Reject also appear on Treasury → Approvals after **更新菜单**. Select the row, then run the command. Those manage routes need the admin session. The public routes above follow the same rule as `runonce`: keep the process on loopback.
+
+Iris returns 404 with its message when a burn is unknown (`POST /api/operator/cctpin`), instead of an empty 500.
 
 `recordrevenue` is public on purpose for the local demo. Do not expose the process to the internet. `TestToken` on `/api/servermanage/*` is local-only; still keep it off a public interface.
 
@@ -106,7 +120,7 @@ PolicyVault is still the spending authority. Circle is the signer and the inboun
 
 | RFB step | Circle product | What is live |
 | --- | --- | --- |
-| Execute `pay` / `sweepToReserve` | Developer-Controlled Wallets (`circle:wallets`) | `POST /v1/w3s/developer/transactions/contractExecution` on `https://api.circle.com`. Entity secret ciphertext is RSA-OAEP SHA-256, re-encrypted every request, matching Circle's Go sample. Gas price is sent in wei (sample 50 gwei) because Arc rejects fees under 20 gwei. Blockchain `ARC-TESTNET` (chain id 5042002) or `ARC` (5042). |
+| Execute `pay` / `sweepToReserve` / `approve` / `reject` | Developer-Controlled Wallets (`circle:wallets`) | `POST /v1/w3s/developer/transactions/contractExecution` on `https://api.circle.com`. Entity secret ciphertext is RSA-OAEP SHA-256, re-encrypted every request. The body sends `walletId`, `blockchain`, and `feeLevel` (`MEDIUM` unless `circle.feeLevel` says otherwise). It does not send `gasPrice`. Set `circle.explicitGas: true` to send gwei `maxFee`, gwei `priorityFee`, and `gasLimit` instead. Status is `GET /v1/w3s/transactions/{id}` until `data.transaction.state` is `COMPLETE`. `FAILED`, `CANCELLED`, and `DENIED` fail with Circle's reason. |
 | Execute `pay` / `sweepToReserve` | Agent Wallet CLI (`circle:agent`) | `circle wallet execute "pay(bytes32,address,uint256,bytes32)" ... --contract <vault> --address <agent> --chain ARC-TESTNET --output json`. Install `@circle-fin/cli` (`circle`). The operator does not pass a private key to the CLI. |
 | Spending limits | Agent Wallet, mainnet only | `circle wallet limit` rejects testnet, including `ARC-TESTNET`. On `ARC` (mainnet) a human sets caps with `circle wallet limit set --address <agent> --chain ARC --policy-type stablecoin --per-tx ... --daily ... --weekly ... --monthly ...` and confirms the email OTP. The operator records that command in the audit `circle_limits` field and does not submit the OTP. |
 | Revenue in | CCTP v2 (`circle:cctp`) | Arc domain is **26**. Iris is `GET /v2/messages/{sourceDomain}?transactionHash=`. Testnet host `https://iris-api-sandbox.circle.com`, mainnet `https://iris-api.circle.com`. Iris cannot list "everything minted to the vault"; it needs the source-chain burn hash. Live mode polls `circle.cctp.burns`. `POST /api/operator/cctpin` with `{"source_domain":"0","tx_hash":"0x..."}` fetches Iris and stores an unreconciled inflow. The next cycle adds it unless that tx hash is already in the USDC transfer log. |
@@ -124,7 +138,7 @@ export ARC_RPC_URL=https://rpc.testnet.arc.io
 export CIRCLE_API_KEY=...                 # Console → Keys → API key. Testnet key for ARC-TESTNET.
 export CIRCLE_ENTITY_SECRET=...           # 64 hex chars. Or CIRCLE_ENTITY_SECRET file path in config, mode 0600.
 export CIRCLE_WALLET_ID=...               # developer-controlled wallet that is the PolicyVault agent
-export CIRCLE_OWNER_WALLET_ID=...         # developer-controlled wallet that is the vault owner; required for sweep
+export CIRCLE_OWNER_WALLET_ID=...         # developer-controlled wallet that is the vault owner; required for sweep, approve, and reject
 go build -o bin/pulse ./cmd/pulse
 ./bin/pulse demo -config config/live.yaml
 ```
@@ -197,12 +211,14 @@ Run the two Go modules separately. There is no root `go.work`: the payment CLI a
 3. Second terminal: `curl -s http://127.0.0.1:18092/api/operator/dashboard`. The top-level `circle` field is `circle:wallets`.
 4. One sentence on camera: dry-run tags Circle and does not call it. Live `executor: circle-wallets` needs `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, and `CIRCLE_WALLET_ID`. Agent-wallet spending limits are mainnet-only (`circle wallet limit set --chain ARC`).
 
+## Scheduled loop
+
+`loopEnabled` defaults to false. Set it true together with `loopInterval` (for example `5m`) and `maxSpendPerRunUSDC` (a positive USDC amount). The server then waits one interval and runs the same cycle as `runonce`. A run already in progress is skipped. Autonomous pays that would push the run over `maxSpendPerRunUSDC` are deferred with `max_spend_per_run`. Leave the flag off for the one-shot demo.
+
 ## What is stubbed
 
-- Telegram delivery.
 - LLM call. The hook exists; the default advisor is a no-op; a configured URL still cannot flip the action.
-- Owner `approve` / `reject`. The agent lists pending requests. The human sends those transactions.
-- Background loop. `loopInterval` is parsed and left unused so a server does not pay on a timer until that is turned on deliberately. Use `demo` or `POST /api/operator/runonce`.
 - Creating the Circle webhook subscription. The receiver and the signature check are in this process. Registering the public HTTPS endpoint is a Console / `POST /v2/notifications/subscriptions/permissionless` step.
 - Agent-wallet spending-limit changes. Reading the supported chain is in code. Setting a limit needs a human email OTP, and Circle rejects the call on testnet.
 - CCTP discovery without a burn transaction hash. Iris looks up one source transaction. It does not stream every mint to the vault. The USDC `Transfer` log still catches the mint after it lands.
+- The admin view listen address. API and gRPC honor `listen` / `OPERATOR_BIND`. The framework's HTML server always uses `:<view port>`.

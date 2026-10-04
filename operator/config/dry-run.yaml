@@ -10,17 +10,25 @@ vaultFixture: testdata/vault.yaml
 ledger: testdata/ledger.yaml
 auditLog: data/audit.jsonl
 fromBlock: 64231944
+logLookback: 9000
+logChunk: 9000
+scanCursor: data/log-cursor.json
 dueHorizon: 168h
 cooldown: 1h
 reserveFloorUSDC: "8.00"
 reserveTargetUSDC: "10.00"
 clock: "2026-10-03T12:00:00Z"
+listen: 127.0.0.1
+loopEnabled: false
 loopInterval: 0s
+maxSpendPerRunUSDC: ""
 llm:
   enabled: false
   urlEnv: OPERATOR_LLM_URL
 notify:
   driver: log
+  tokenEnv: TELEGRAM_BOT_TOKEN
+  chatEnv: TELEGRAM_CHAT_ID
 secrets:
   rpcEnv: ARC_RPC_URL
   agentKeyEnv: OPERATOR_PRIVATE_KEY
@@ -30,6 +38,7 @@ secrets:
 gas:
   maxFeePerGasGwei: 50
   maxPriorityFeePerGasGwei: 2
+  gasLimit: 0
 # Dry-run tags decisions as Circle Wallets and does not call Circle.
 # Live mode with the same executor sends pay through the Wallets API.
 executor: circle-wallets
@@ -44,6 +53,8 @@ circle:
   ownerWalletIDEnv: CIRCLE_OWNER_WALLET_ID
   agentAddressEnv: CIRCLE_AGENT_ADDRESS
   ownerAddressEnv: CIRCLE_OWNER_ADDRESS
+  feeLevel: MEDIUM
+  explicitGas: false
   cctp:
     enabled: true
     burns: []

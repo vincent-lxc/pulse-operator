@@ -132,7 +132,13 @@ is tagged `circle:wallets`, and the sample inflows are tagged `circle:cctp` and
 | Fallback signer | go-ethereum raw key (`executor: raw-key`, tag `local:key`) |
 
 Live Arc testnet steps, the exact env vars, and a short screen-record script are in
-[docs/operator-agent.md](docs/operator-agent.md).
+[docs/operator-agent.md](docs/operator-agent.md). Circle Wallets sends `feeLevel: MEDIUM`
+(or explicit gwei `maxFee` / `priorityFee` / `gasLimit`) and polls
+`GET /v1/w3s/transactions/{id}` until `COMPLETE`. Owner approve/reject is on
+`POST /api/operator/approve` and the Approvals view. Telegram sends when
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set. `loopEnabled` stays off
+unless `loopInterval` and `maxSpendPerRunUSDC` are set. If `rpc.testnet.arc.io`
+returns 429, use `https://rpc.blockdaemon.testnet.arc.io`.
 
 ## License
 

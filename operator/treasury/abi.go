@@ -13,6 +13,8 @@ import (
 const vaultABIJSON = `[
  {"type":"function","name":"pay","stateMutability":"nonpayable","inputs":[{"name":"category","type":"bytes32"},{"name":"payee","type":"address"},{"name":"amount","type":"uint256"},{"name":"decisionHash","type":"bytes32"}],"outputs":[{"name":"paid","type":"bool"},{"name":"requestId","type":"uint256"}]},
  {"type":"function","name":"sweepToReserve","stateMutability":"nonpayable","inputs":[{"name":"amount","type":"uint256"},{"name":"decisionHash","type":"bytes32"}],"outputs":[]},
+ {"type":"function","name":"approve","stateMutability":"nonpayable","inputs":[{"name":"requestId","type":"uint256"}],"outputs":[]},
+ {"type":"function","name":"reject","stateMutability":"nonpayable","inputs":[{"name":"requestId","type":"uint256"}],"outputs":[]},
  {"type":"function","name":"balance","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"uint256"}]},
  {"type":"function","name":"paused","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"bool"}]},
  {"type":"function","name":"reserve","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"address"}]},
@@ -51,4 +53,31 @@ func PackPay(category, payee string, amount *big.Int, decision common.Hash) ([]b
 // PackSweep 编码 sweepToReserve(amount, decisionHash)。
 func PackSweep(amount *big.Int, decision common.Hash) ([]byte, error) {
 	return contractABI.Pack("sweepToReserve", unitsOrZero(amount), decision)
+}
+
+// ParseRequestID 把十进制请求号转成 uint256。
+func ParseRequestID(raw string) (*big.Int, error) {
+	n, ok := new(big.Int).SetString(strings.TrimSpace(raw), 10)
+	if !ok || n.Sign() < 0 {
+		return nil, fmt.Errorf("request id must be a non-negative integer")
+	}
+	return n, nil
+}
+
+// PackApprove 编码 approve(requestId)。
+func PackApprove(requestID string) ([]byte, error) {
+	id, err := ParseRequestID(requestID)
+	if err != nil {
+		return nil, err
+	}
+	return contractABI.Pack("approve", id)
+}
+
+// PackReject 编码 reject(requestId)。
+func PackReject(requestID string) ([]byte, error) {
+	id, err := ParseRequestID(requestID)
+	if err != nil {
+		return nil, err
+	}
+	return contractABI.Pack("reject", id)
 }
