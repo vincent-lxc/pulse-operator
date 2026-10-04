@@ -1,0 +1,2 @@
+id,category,payee,amount_usdc,due,memo
+csv-item,infra,0x1111111111111111111111111111111111111111,1.25,2026-10-01T00:00:00Z,from csv

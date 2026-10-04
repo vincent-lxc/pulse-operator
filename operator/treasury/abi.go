@@ -1,0 +1,100 @@
+// 本文件编码 PolicyVault 的 pay 与 sweepToReserve 调用数据。
+package treasury
+
+import (
+	"fmt"
+	"math/big"
+	"strings"
+
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
+)
+
+const vaultABIJSON = `[
+ {"type":"function","name":"pay","stateMutability":"nonpayable","inputs":[{"name":"category","type":"bytes32"},{"name":"payee","type":"address"},{"name":"amount","type":"uint256"},{"name":"decisionHash","type":"bytes32"}],"outputs":[{"name":"paid","type":"bool"},{"name":"requestId","type":"uint256"}]},
+ {"type":"function","name":"sweepToReserve","stateMutability":"nonpayable","inputs":[{"name":"amount","type":"uint256"},{"name":"decisionHash","type":"bytes32"}],"outputs":[]},
+ {"type":"function","name":"approve","stateMutability":"nonpayable","inputs":[{"name":"requestId","type":"uint256"}],"outputs":[]},
+ {"type":"function","name":"reject","stateMutability":"nonpayable","inputs":[{"name":"requestId","type":"uint256"}],"outputs":[]},
+ {"type":"function","name":"balance","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"uint256"}]},
+ {"type":"function","name":"paused","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"bool"}]},
+ {"type":"function","name":"reserve","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"address"}]},
+ {"type":"function","name":"owner","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"address"}]},
+ {"type":"function","name":"getCategory","stateMutability":"view","inputs":[{"name":"category","type":"bytes32"}],"outputs":[{"name":"v","type":"tuple","components":[{"name":"enabled","type":"bool"},{"name":"budget","type":"uint256"},{"name":"perTxCap","type":"uint256"},{"name":"period","type":"uint64"},{"name":"epoch","type":"uint64"},{"name":"epochStart","type":"uint64"},{"name":"epochEnd","type":"uint64"},{"name":"spent","type":"uint256"},{"name":"autoSpent","type":"uint256"},{"name":"approvedSpent","type":"uint256"},{"name":"remaining","type":"uint256"}]}]},
+ {"type":"function","name":"isPayeeAllowed","stateMutability":"view","inputs":[{"name":"category","type":"bytes32"},{"name":"payee","type":"address"}],"outputs":[{"name":"","type":"bool"}]},
+ {"type":"function","name":"pendingRequestIds","stateMutability":"view","inputs":[],"outputs":[{"name":"","type":"uint256[]"}]},
+ {"type":"function","name":"getRequest","stateMutability":"view","inputs":[{"name":"requestId","type":"uint256"}],"outputs":[{"name":"","type":"tuple","components":[{"name":"category","type":"bytes32"},{"name":"payee","type":"address"},{"name":"amount","type":"uint256"},{"name":"decisionHash","type":"bytes32"},{"name":"createdAt","type":"uint64"},{"name":"reason","type":"uint8"},{"name":"status","type":"uint8"}]}]},
+ {"type":"function","name":"decisionUsed","stateMutability":"view","inputs":[{"name":"decisionHash","type":"bytes32"}],"outputs":[{"name":"","type":"bool"}]},
+ {"type":"event","name":"AgentPaid","inputs":[{"name":"category","type":"bytes32","indexed":true},{"name":"payee","type":"address","indexed":true},{"name":"amount","type":"uint256"},{"name":"epoch","type":"uint64"},{"name":"decisionHash","type":"bytes32","indexed":true}]},
+ {"type":"event","name":"ApprovalRequested","inputs":[{"name":"requestId","type":"uint256","indexed":true},{"name":"category","type":"bytes32","indexed":true},{"name":"payee","type":"address","indexed":true},{"name":"amount","type":"uint256"},{"name":"reason","type":"uint8"},{"name":"decisionHash","type":"bytes32"}]},
+ {"type":"event","name":"SweptToReserve","inputs":[{"name":"reserve","type":"address","indexed":true},{"name":"amount","type":"uint256"},{"name":"decisionHash","type":"bytes32","indexed":true}]},
+ {"type":"error","name":"NotOwner","inputs":[]},
+ {"type":"error","name":"NotAgent","inputs":[]},
+ {"type":"error","name":"NotPendingOwner","inputs":[]},
+ {"type":"error","name":"IsPaused","inputs":[]},
+ {"type":"error","name":"ZeroAddress","inputs":[]},
+ {"type":"error","name":"ZeroAmount","inputs":[]},
+ {"type":"error","name":"ZeroDecisionHash","inputs":[]},
+ {"type":"error","name":"ZeroPeriod","inputs":[]},
+ {"type":"error","name":"DecisionAlreadyUsed","inputs":[{"name":"decisionHash","type":"bytes32"}]},
+ {"type":"error","name":"UnknownCategory","inputs":[{"name":"category","type":"bytes32"}]},
+ {"type":"error","name":"PayeeNotAllowed","inputs":[{"name":"category","type":"bytes32"},{"name":"payee","type":"address"}]},
+ {"type":"error","name":"OverLimit","inputs":[{"name":"reason","type":"uint8"},{"name":"amount","type":"uint256"},{"name":"perTxCap","type":"uint256"},{"name":"remaining","type":"uint256"}]},
+ {"type":"error","name":"RequestNotPending","inputs":[{"name":"requestId","type":"uint256"}]},
+ {"type":"error","name":"InsufficientBalance","inputs":[{"name":"balance","type":"uint256"},{"name":"needed","type":"uint256"}]},
+ {"type":"error","name":"TransferFailed","inputs":[]},
+ {"type":"error","name":"Reentrancy","inputs":[]}
+]`
+
+var contractABI = mustContractABI()
+
+func mustContractABI() abi.ABI {
+	a, err := abi.JSON(strings.NewReader(vaultABIJSON))
+	if err != nil {
+		panic(err)
+	}
+	return a
+}
+
+// PackPay 编码 pay(category, payee, amount, decisionHash)。
+func PackPay(category, payee string, amount *big.Int, decision common.Hash) ([]byte, error) {
+	word, err := CategoryWord(category)
+	if err != nil {
+		return nil, err
+	}
+	if !common.IsHexAddress(payee) {
+		return nil, fmt.Errorf("payee is not an address")
+	}
+	return contractABI.Pack("pay", word, common.HexToAddress(payee), unitsOrZero(amount), decision)
+}
+
+// PackSweep 编码 sweepToReserve(amount, decisionHash)。
+func PackSweep(amount *big.Int, decision common.Hash) ([]byte, error) {
+	return contractABI.Pack("sweepToReserve", unitsOrZero(amount), decision)
+}
+
+// ParseRequestID 把十进制请求号转成 uint256。
+func ParseRequestID(raw string) (*big.Int, error) {
+	n, ok := new(big.Int).SetString(strings.TrimSpace(raw), 10)
+	if !ok || n.Sign() < 0 {
+		return nil, fmt.Errorf("request id must be a non-negative integer")
+	}
+	return n, nil
+}
+
+// PackApprove 编码 approve(requestId)。
+func PackApprove(requestID string) ([]byte, error) {
+	id, err := ParseRequestID(requestID)
+	if err != nil {
+		return nil, err
+	}
+	return contractABI.Pack("approve", id)
+}
+
+// PackReject 编码 reject(requestId)。
+func PackReject(requestID string) ([]byte, error) {
+	id, err := ParseRequestID(requestID)
+	if err != nil {
+		return nil, err
+	}
+	return contractABI.Pack("reject", id)
+}

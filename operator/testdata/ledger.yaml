@@ -1,0 +1,31 @@
+payables:
+  - id: cloud-oct
+    category: infra
+    payee: "0x1111111111111111111111111111111111111111"
+    amount_usdc: "2.00"
+    due: "2026-10-01T00:00:00Z"
+    memo: "October cloud"
+  - id: cloud-extra
+    category: infra
+    payee: "0x1111111111111111111111111111111111111111"
+    amount_usdc: "0.50"
+    due: "2026-10-02T00:00:00Z"
+    memo: "Same payee, inside cooldown"
+  - id: contractor-bonus
+    category: people
+    payee: "0x2222222222222222222222222222222222222222"
+    amount_usdc: "3.00"
+    due: "2026-10-03T00:00:00Z"
+    memo: "Over the per-tx cap"
+  - id: unknown-vendor
+    category: infra
+    payee: "0x3333333333333333333333333333333333333333"
+    amount_usdc: "0.10"
+    due: "2026-10-03T00:00:00Z"
+    memo: "Not on the allowlist"
+  - id: conference
+    category: infra
+    payee: "0x1111111111111111111111111111111111111111"
+    amount_usdc: "1.00"
+    due: "2026-11-15T00:00:00Z"
+    memo: "Not due yet"

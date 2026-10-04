@@ -1,0 +1,76 @@
+# Copy to a gitignored path before live use. Do not put key material in this file.
+# RPC and keys are read from the environment or from a mode-0600 file path.
+mode: live
+agentID: pulse-operator
+chainID: "5042002"
+vault: "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01"
+agent: "0xb71c11F7b28D9A912e7C3ACfbe423f7DeA568DEa"
+usdc: "0x3600000000000000000000000000000000000000"
+chainDriver: rpc
+vaultFixture: ""
+ledger: testdata/ledger.yaml
+auditLog: data/audit.jsonl
+# First scan uses the last logLookback blocks (Arc getLogs rejects ~10k+ ranges).
+# data/log-cursor.json then advances. fullLogScan: true pages from fromBlock.
+fromBlock: 0
+logLookback: 9000
+logChunk: 9000
+fullLogScan: false
+scanCursor: data/log-cursor.json
+dueHorizon: 168h
+cooldown: 1h
+reserveFloorUSDC: "8.00"
+reserveTargetUSDC: "10.00"
+clock: ""
+# API and gRPC bind here. OPERATOR_BIND overrides. Core's admin view (-view) still
+# listens on all interfaces because the framework hardcodes that address.
+listen: 127.0.0.1
+# Set loopEnabled true only with loopInterval and maxSpendPerRunUSDC. Default is off.
+loopEnabled: false
+loopInterval: 0s
+maxSpendPerRunUSDC: ""
+llm:
+  enabled: false
+  urlEnv: OPERATOR_LLM_URL
+notify:
+  driver: log
+  tokenEnv: TELEGRAM_BOT_TOKEN
+  tokenFile: ""
+  chatEnv: TELEGRAM_CHAT_ID
+  chatFile: ""
+secrets:
+  # Public rpc.testnet.arc.io often returns 429. Fallback: https://rpc.blockdaemon.testnet.arc.io
+  rpcEnv: ARC_RPC_URL
+  agentKeyEnv: OPERATOR_PRIVATE_KEY
+  agentKeyFile: ""
+  ownerKeyEnv: OWNER_PRIVATE_KEY
+  ownerKeyFile: ""
+gas:
+  maxFeePerGasGwei: 50
+  maxPriorityFeePerGasGwei: 2
+  # Used only when circle.explicitGas is true. Values are gwei, plus gas units.
+  gasLimit: 0
+# raw-key keeps the go-ethereum signer. Switch to circle-wallets or circle-agent
+# and export the env vars named below. Do not put secret values in this file.
+executor: raw-key
+circle:
+  blockchain: ARC-TESTNET
+  apiBase: https://api.circle.com
+  irisBase: https://iris-api-sandbox.circle.com
+  cli: circle
+  apiKeyEnv: CIRCLE_API_KEY
+  apiKeyFile: ""
+  entitySecretEnv: CIRCLE_ENTITY_SECRET
+  entitySecretFile: ""
+  walletIDEnv: CIRCLE_WALLET_ID
+  walletIDFile: ""
+  ownerWalletIDEnv: CIRCLE_OWNER_WALLET_ID
+  ownerWalletIDFile: ""
+  agentAddressEnv: CIRCLE_AGENT_ADDRESS
+  ownerAddressEnv: CIRCLE_OWNER_ADDRESS
+  # Default feeLevel MEDIUM. explicitGas sends maxFee, priorityFee and gasLimit instead.
+  feeLevel: MEDIUM
+  explicitGas: false
+  cctp:
+    enabled: true
+    burns: []
