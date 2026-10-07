@@ -24,6 +24,8 @@ type Facts struct {
 	MaxBill         *big.Int
 	MaxSpend        *big.Int
 	RunSpent        *big.Int
+	// ObserveFailed 表示测试网或主网没有读到余额、品类、白名单或上限。
+	ObserveFailed bool
 }
 
 // Hard 是代码给出的动作。Submit 为真时才会调用 PolicyVault.pay。
@@ -34,8 +36,12 @@ type Hard struct {
 	Reason     string
 }
 
-// DecideHard 按固定顺序检查。超上限仍提交 pay，让金库生成审批；其余失败不提交。
+// DecideHard 按固定顺序检查。品类单笔或剩余预算超限仍提交 pay，让金库生成审批。
+// 余额不足、链上读取失败和操作者自己的上限不提交。
 func DecideHard(f Facts) Hard {
+	if f.ObserveFailed {
+		return Hard{Action: "escalate_to_human", ReasonCode: "observe_failed", Reason: "on-chain vault reads failed"}
+	}
 	if f.QuoteCents <= 0 {
 		return Hard{Action: "escalate_to_human", ReasonCode: "quote_missing", Reason: "domain quote is missing"}
 	}
@@ -55,6 +61,9 @@ func DecideHard(f Facts) Hard {
 		return Hard{Action: "escalate_to_human", ReasonCode: "monthly_limit", Reason: "quote would pass the Porkbun monthly limit"}
 	}
 	amount := unitsOf(f.Amount)
+	if f.Balance != nil && amount.Cmp(f.Balance) > 0 {
+		return Hard{Action: "escalate_to_human", ReasonCode: "insufficient_balance", Reason: "amount is above the vault balance"}
+	}
 	if f.MaxBill != nil && f.MaxBill.Sign() > 0 && amount.Cmp(f.MaxBill) > 0 {
 		return Hard{Action: "escalate_to_human", ReasonCode: "max_bill", Reason: "amount is above maxBillUSDC"}
 	}

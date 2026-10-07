@@ -43,8 +43,12 @@ func TestBillDryRunPaysOnceAndKeepsHash(t *testing.T) {
 	if err := AdvanceBill(context.Background(), bill, deps); err != nil {
 		t.Fatal(err)
 	}
-	if bill.State != "done" || bill.ModelID != "rules" || bill.Rationale == "" || bill.DecisionHash == "" {
+	if bill.State != "done" || bill.ModelID != "rules" || bill.Planner != "rules" || bill.Rationale == "" || bill.DecisionHash == "" {
 		t.Fatalf("%+v", bill)
+	}
+	row, err := models.FindDecision(bill.DecisionHash)
+	if err != nil || row == nil || row.Outcome != "done" {
+		t.Fatalf("outcome %+v %v", row, err)
 	}
 	hash := bill.DecisionHash
 	if err := AdvanceBill(context.Background(), bill, deps); err != nil {
@@ -119,8 +123,8 @@ func TestBillPlannerCannotRaiseAndFailClosedSkipsPay(t *testing.T) {
 	if err := AdvanceBill(context.Background(), closed, deps); err != nil {
 		t.Fatal(err)
 	}
-	if closed.Action != treasury.ActionEscalate || closed.ReasonCode != "planner_fail_closed" || closed.State == "done" {
-		t.Fatalf("%s %s %s", closed.Action, closed.ReasonCode, closed.State)
+	if closed.Action != treasury.ActionEscalate || closed.ReasonCode != "planner_fail_closed" || closed.State == "done" || closed.Planner != "error" {
+		t.Fatalf("%s %s %s planner=%s", closed.Action, closed.ReasonCode, closed.State, closed.Planner)
 	}
 }
 

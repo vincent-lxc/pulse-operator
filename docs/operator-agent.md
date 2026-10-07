@@ -70,7 +70,7 @@ No chain write happens. `chainDriver: mock` is the offline snapshot. A later moc
 
 USDC `Transfer` logs are read in chunks of `logChunk` (default 9000). The first scan is the last `logLookback` blocks unless `fullLogScan: true`. `data/log-cursor.json` stores the last scanned block. Public `https://rpc.testnet.arc.io` often returns HTTP 429; RPC calls retry with backoff. Fallback endpoint: `https://rpc.blockdaemon.testnet.arc.io`. On-chain inflows are tagged `local:rpc`.
 
-The API, gRPC, and admin view (`-view`) bind to `listen` (default `127.0.0.1`). `OPERATOR_BIND` overrides it. Loopback binds also set the framework local-visit check. The framework's HTML server would listen on every interface; the process disables that listener and serves the same routes on `listen` instead.
+The API and gRPC bind to `listen` (default `127.0.0.1`). `OPERATOR_BIND` overrides that. Loopback binds also set the framework local-visit check. The admin view (`-view`) listens on all interfaces (`:<port>`). `digitalwayhk/core` hardcodes that address and has no bind option. Firewall the view port to localhost, or open it through an SSH tunnel. Do not expose it on a public interface.
 
 ## Admin view and HTTP
 
@@ -89,9 +89,9 @@ go build -o bin/pulse ./cmd/pulse
 | Framework `server` service | http://127.0.0.1:18091 |
 | Operator API | http://127.0.0.1:18092 |
 
-`-p` is the base port. Core gives DataCenterID 1 to its built-in `server` service, so that process listens on 18091. This service is registered second and listens on 18092 (`base + DataCenterID - 1`). The view process proxies `/api/*`, so the same dashboard URL also works on port 43123. gRPC follows the same split: pass `-grpc 19091` and the operator gRPC port is 19092. HTTP and gRPC bind to 127.0.0.1 unless `OPERATOR_BIND` or `listen` says otherwise.
+`-p` is the base port. Core gives DataCenterID 1 to its built-in `server` service, so that process listens on 18091. This service is registered second and listens on 18092 (`base + DataCenterID - 1`). The view process proxies `/api/*`, so the same dashboard URL also works on port 43123. gRPC follows the same split: pass `-grpc 19091` and the operator gRPC port is 19092. HTTP and gRPC bind to 127.0.0.1 unless `OPERATOR_BIND` or `listen` says otherwise. The view port itself listens on every interface; keep 43123 on localhost with a firewall or a tunnel. The left menu is Treasury (金库) plus System.
 
-In the admin UI open menu management, run **更新菜单**, then open Decisions, Payables, Approvals, Revenue, Categories, Cycles. Manage routes are view and search only, except Approvals, which also has Approve and Reject. The local view signs a TestToken for `platform-admin` by itself.
+In the admin UI open menu management, run **更新菜单**, then open Decisions, Payables, Approvals, Bills, Revenue, Categories, Cycles. Manage routes are view and search only, except Approvals (Approve and Reject for a vault request) and Bills (Approve, Reopen, and Close for an escalation that never reached the vault). The local view signs a TestToken for `platform-admin` by itself.
 
 Decisions and Approvals include `circle_tx_id` and `circle_state` when Circle submitted the transaction. The Decisions view also shows `rationale`, `model_id`, and `prompt_hash` from the planner. The browser document title is **Pulse Operator**: the process serves a rewritten copy of the embedded admin frontend. The sidebar name is still 金库 / Treasury.
 
@@ -229,5 +229,5 @@ Run the two Go modules separately. There is no root `go.work`: the payment CLI a
 - Creating the Circle webhook subscription. The receiver and the signature check are in this process. Registering the public HTTPS endpoint is a Console / `POST /v2/notifications/subscriptions/permissionless` step.
 - Agent-wallet spending-limit changes. Reading the supported chain is in code. Setting a limit needs a human email OTP, and Circle rejects the call on testnet.
 - CCTP discovery without a burn transaction hash. Iris looks up one source transaction. It does not stream every mint to the vault. The USDC `Transfer` log still catches the mint after it lands.
-- The admin view listen address follows `listen` / `OPERATOR_BIND` (default `127.0.0.1`).
+- The admin view listen address. API and gRPC follow `listen` / `OPERATOR_BIND` (default `127.0.0.1`). The view listens on `:<port>` because the framework hardcodes it; firewall that port to localhost.
 - The admin sidebar title. The document title is Pulse Operator. The sidebar stays 金库 / Treasury.

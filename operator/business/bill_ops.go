@@ -277,15 +277,29 @@ func dryFacts(bill *models.Bill, cents int64, amount *big.Int, cfg treasury.Conf
 	if err != nil {
 		return facts
 	}
-	facts.Balance = snap.Balance
+	facts.Balance = subFloor(snap.Balance, runSpent)
 	cat, ok := snap.Categories["domains"]
 	if !ok || !cat.Enabled {
 		return facts
 	}
 	facts.CategoryEnabled = true
-	facts.Remaining = cat.Remaining
+	facts.Remaining = subFloor(cat.Remaining, runSpent)
 	facts.PerTxCap = cat.PerTxCap
 	return facts
+}
+
+func subFloor(have, spent *big.Int) *big.Int {
+	if have == nil {
+		return nil
+	}
+	if spent == nil || spent.Sign() <= 0 {
+		return new(big.Int).Set(have)
+	}
+	out := new(big.Int).Sub(have, spent)
+	if out.Sign() < 0 {
+		return big.NewInt(0)
+	}
+	return out
 }
 
 func optionalUSDC(raw string) *big.Int {
@@ -329,6 +343,7 @@ type billDisk struct {
 	QuoteCents   int64  `yaml:"quoteCents"`
 	State        string `yaml:"state"`
 	DecisionHash string `yaml:"decisionHash"`
+	Planner      string `yaml:"planner"`
 	Action       string `yaml:"action"`
 	ReasonCode   string `yaml:"reasonCode"`
 	Reason       string `yaml:"reason"`
@@ -392,6 +407,7 @@ func importBillFile(path string) error {
 			row.State = "quoted"
 		}
 		row.DecisionHash = item.DecisionHash
+		row.Planner = item.Planner
 		row.Action = item.Action
 		row.ReasonCode = item.ReasonCode
 		row.Reason = item.Reason
@@ -422,7 +438,7 @@ func upsertBillFile(path string, row *models.Bill) error {
 	}
 	disk := billDisk{
 		ID: row.Code, Vendor: row.Vendor, Kind: row.Kind, Domain: row.Domain, Years: row.Years,
-		QuoteCents: row.QuoteCents, State: row.State, DecisionHash: row.DecisionHash, Action: row.Action,
+		QuoteCents: row.QuoteCents, State: row.State, DecisionHash: row.DecisionHash, Planner: row.Planner, Action: row.Action,
 		ReasonCode: row.ReasonCode, Reason: row.Reason, Rationale: row.Rationale, ModelID: row.ModelID,
 		PromptHash: row.PromptHash, VaultTx: row.VaultTx, BurnTx: row.CCTPBurnTx, MintTx: row.BaseMintTx,
 		OrderID: row.PorkbunOrderID, Mode: row.Mode,

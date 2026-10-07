@@ -50,24 +50,9 @@ func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps
 		return order.CostCents, fee, nil
 	}
 	deps.facts = func(bill *models.Bill, cents int64, amount *big.Int) procurement.Facts {
-		facts := dryFacts(bill, cents, amount, cfg, deps.runSpent)
-		if observed, ok := observeFacts(ctx, cfg, bill, deps.payee); ok {
-			facts.Balance = observed.Balance
-			if cat, exists := observed.Categories[bill.CategoryCode]; exists {
-				facts.CategoryEnabled = cat.Enabled
-				facts.Remaining = cat.Remaining
-				facts.PerTxCap = cat.PerTxCap
-				if len(cat.Payees) > 0 {
-					facts.PayeeAllowed = cat.Payees[treasury.NormalizeAddress(deps.payee)]
-				}
-			}
-			return facts
-		}
-		if !facts.CategoryEnabled {
-			facts.CategoryEnabled = true
-			facts.PayeeAllowed = true
-		}
-		return facts
+		facts := dryFacts(bill, cents, amount, cfg, nil)
+		observed, err := observeFacts(ctx, cfg, bill, deps.payee)
+		return applyObservation(facts, bill.CategoryCode, deps.payee, observed, err, deps.runSpent)
 	}
 	deps.vault = func(ctx context.Context, bill *models.Bill, amount *big.Int, hash string) (vaultResult, error) {
 		chain, closeChain, err := openChain(ctx, cfg, []treasury.Payable{{
@@ -124,22 +109,48 @@ func quoteForwardFee(ctx context.Context, cfg treasury.Config, needed *big.Int) 
 	return maxFee, err
 }
 
-func observeFacts(ctx context.Context, cfg treasury.Config, bill *models.Bill, payee string) (treasury.Snapshot, bool) {
+func observeFacts(ctx context.Context, cfg treasury.Config, bill *models.Bill, payee string) (treasury.Snapshot, error) {
 	if cfg.Mode == "" || cfg.Mode == "dry-run" {
-		return treasury.Snapshot{}, false
+		return treasury.Snapshot{}, fmt.Errorf("dry-run does not read the chain")
 	}
 	chain, closeChain, err := openChain(ctx, cfg, []treasury.Payable{{
 		ID: bill.Code, Category: bill.CategoryCode, Payee: payee, Due: time.Now().UTC(), Status: "pending",
 	}})
 	if err != nil {
-		return treasury.Snapshot{}, false
+		return treasury.Snapshot{}, err
 	}
 	defer closeChain()
-	snap, err := chain.Observe(ctx)
-	if err != nil {
-		return treasury.Snapshot{}, false
+	return chain.Observe(ctx)
+}
+
+// applyObservation 用链上快照覆盖报价事实。读失败时清空余额和上限，交给硬规则升级且不付款。
+func applyObservation(facts procurement.Facts, category, payee string, observed treasury.Snapshot, observeErr error, runSpent *big.Int) procurement.Facts {
+	if observeErr != nil {
+		facts.ObserveFailed = true
+		facts.CategoryEnabled = false
+		facts.PayeeAllowed = false
+		facts.Balance = nil
+		facts.Remaining = nil
+		facts.PerTxCap = nil
+		return facts
 	}
-	return snap, true
+	facts.ObserveFailed = false
+	facts.Balance = subFloor(observed.Balance, runSpent)
+	cat, exists := observed.Categories[category]
+	if !exists {
+		facts.CategoryEnabled = false
+		facts.PayeeAllowed = false
+		facts.Remaining = nil
+		facts.PerTxCap = nil
+		return facts
+	}
+	facts.CategoryEnabled = cat.Enabled
+	facts.Remaining = subFloor(cat.Remaining, runSpent)
+	facts.PerTxCap = cat.PerTxCap
+	if len(cat.Payees) > 0 {
+		facts.PayeeAllowed = cat.Payees[treasury.NormalizeAddress(payee)]
+	}
+	return facts
 }
 
 var pollBurnMessages = pollIris

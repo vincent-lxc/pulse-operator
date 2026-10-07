@@ -116,10 +116,13 @@ func TestModelRejectOfCompliantBillEscalates(t *testing.T) {
 	if !strings.Contains(bill.RiskNotes, "llm_chose:reject") || !strings.Contains(bill.RiskNotes, "llm_disagreed") {
 		t.Fatalf("notes %s", bill.RiskNotes)
 	}
+	if bill.Planner != "gateway" {
+		t.Fatalf("planner %s", bill.Planner)
+	}
 	again, err := treasury.DecisionHash(treasury.Canonical{
 		V: 2, AgentID: deps.policy.AgentID, ChainID: deps.policy.ChainID, Vault: deps.policy.Vault,
 		PayableID: bill.Code, Action: bill.Action, Category: bill.CategoryCode, Payee: deps.payee,
-		AmountUnits: bill.AmountUnits, ReasonCode: bill.ReasonCode, Planner: "gateway",
+		AmountUnits: bill.AmountUnits, ReasonCode: bill.ReasonCode, Planner: bill.Planner,
 		ModelID: bill.ModelID, PlannerAction: bill.PlannerAction, Rationale: bill.Rationale,
 		PromptHash: bill.PromptHash, RiskNotes: bill.RiskNotes, Confidence: bill.Confidence,
 		Disagree: strings.Contains(bill.RiskNotes, "llm_disagreed"),
@@ -238,6 +241,10 @@ func TestDryFactsReadDomainsCategory(t *testing.T) {
 	}
 	if facts.Balance.Cmp(big.NewInt(20_000_000)) != 0 || facts.Remaining.Cmp(big.NewInt(30_000_000)) != 0 {
 		t.Fatalf("balance %s remaining %s", facts.Balance, facts.Remaining)
+	}
+	spent := dryFacts(&models.Bill{Code: "none", CategoryCode: "domains"}, 875, big.NewInt(1), cfg, big.NewInt(8_000_000))
+	if spent.Balance.Cmp(big.NewInt(12_000_000)) != 0 || spent.Remaining.Cmp(big.NewInt(22_000_000)) != 0 {
+		t.Fatalf("after spend balance %s remaining %s", spent.Balance, spent.Remaining)
 	}
 }
 

@@ -60,6 +60,36 @@ func TestDecideHardMaxBillAndRunCapEscalateWithoutSubmit(t *testing.T) {
 	}
 }
 
+func TestDecideHardInsufficientBalanceDoesNotSubmit(t *testing.T) {
+	got := DecideHard(Facts{
+		CategoryEnabled: true, PayeeAllowed: true,
+		Amount: big.NewInt(23_880_000), Balance: big.NewInt(20_000_000),
+		Remaining: big.NewInt(30_000_000), PerTxCap: big.NewInt(15_000_000),
+		QuoteCents: 875, MonthlyLimit: 10000, DailyCap: 10,
+	})
+	if got.Action != "escalate_to_human" || got.Submit || got.ReasonCode != "insufficient_balance" {
+		t.Fatalf("%+v", got)
+	}
+	unknown := DecideHard(Facts{
+		CategoryEnabled: true, PayeeAllowed: true,
+		Amount: big.NewInt(1), QuoteCents: 875, MonthlyLimit: 10000, DailyCap: 10,
+		Remaining: big.NewInt(30), PerTxCap: big.NewInt(15),
+	})
+	if unknown.Action != "pay" || !unknown.Submit {
+		t.Fatalf("nil balance should not block: %+v", unknown)
+	}
+}
+
+func TestDecideHardObserveFailureDoesNotSubmit(t *testing.T) {
+	got := DecideHard(Facts{
+		ObserveFailed: true, CategoryEnabled: true, PayeeAllowed: true,
+		Amount: big.NewInt(1), QuoteCents: 875, MonthlyLimit: 10000, DailyCap: 10,
+	})
+	if got.Action != "escalate_to_human" || got.Submit || got.ReasonCode != "observe_failed" {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestDecideHardDailyCapDoesNotSubmit(t *testing.T) {
 	got := DecideHard(Facts{
 		CategoryEnabled: true, PayeeAllowed: true,

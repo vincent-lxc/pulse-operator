@@ -42,6 +42,17 @@ type RunOnceResponse struct {
 	Decisions int    `json:"decisions" desc:"决策条数"`
 }
 
+// BillActionResponse 是账单批准、重开或关闭的回执。
+type BillActionResponse struct {
+	Code         string `json:"code" desc:"账单编号"`
+	State        string `json:"state" desc:"状态"`
+	Action       string `json:"action" desc:"动作"`
+	ReasonCode   string `json:"reasonCode" desc:"原因码"`
+	DecisionHash string `json:"decisionHash" desc:"决策哈希"`
+	Planner      string `json:"planner" desc:"规划器"`
+	VaultTx      string `json:"vaultTx" desc:"金库交易"`
+}
+
 // ApprovalActionResponse 是 owner approve 或 reject 的回执。
 type ApprovalActionResponse struct {
 	RequestID   string `json:"requestID" desc:"链上请求号"`

@@ -91,7 +91,7 @@ locks that in.
 
 Operator `decisionHash` version 2 covers, in struct order: `v`, `agent_id`, `chain_id`, `vault`, `payable_id`, `action`, `category`, `payee`, `amount_units`, `reason_code`, `planner`, `model_id`, `planner_action`, `rationale`, `prompt_hash`, `risk_notes`, `confidence`, `disagree`.
 
-The hash does **not** include latency, the raw model body, the chain transaction, Circle's transaction id, or the outcome. Those are stored on the decision row and in the JSONL payload (`latency_ms` is on the bill evidence and on a `planner_disagree` row). `risk_notes` inside the hash is the same string stored on the bill: disagreement text is appended before the hash, not after.
+The hash does **not** include latency, the raw model body, the chain transaction, Circle's transaction id, or the outcome. Those are stored on the decision row and in the JSONL payload (`latency_ms` is on the bill evidence and on a `planner_disagree` row). `risk_notes` inside the hash is the same string stored on the bill: disagreement text is appended before the hash, not after. `planner` inside the hash is the same string stored on the bill (`rules`, `gateway`, `error`, or `owner`); recompute it from that column. When a bill moves past `decided`, the decision row's `outcome` is updated to the bill state.
 
 The Decisions admin view shows `rationale` and `model_id` for treasury-loop decisions and for domain bills. Bills also have their own view, with Arc and Base explorer links when a real transaction hash exists.
 

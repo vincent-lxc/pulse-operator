@@ -14,7 +14,7 @@ import (
 
 func runBill(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: pulse bill add|run|list|export|return-float")
+		return fmt.Errorf("usage: pulse bill add|run|list|export|approve|reopen|close|return-float")
 	}
 	logx.Disable()
 	switch args[0] {
@@ -26,6 +26,12 @@ func runBill(args []string) error {
 		return billList()
 	case "export":
 		return billExport(args[1:])
+	case "approve":
+		return billApprove(args[1:])
+	case "reopen":
+		return billReopen(args[1:])
+	case "close":
+		return billClose(args[1:])
 	case "return-float":
 		return billReturn(args[1:])
 	default:
@@ -82,6 +88,66 @@ func billRun(args []string) error {
 		fmt.Printf("bill %s state=%s action=%s hash=%s rationale=%s model=%s vault=%s order=%s\n",
 			row.Code, row.State, row.Action, row.DecisionHash, oneLine(row.Rationale), row.ModelID, row.VaultTx, row.PorkbunOrderID)
 	}
+	return nil
+}
+
+func billApprove(args []string) error {
+	fs := flag.NewFlagSet("bill approve", flag.ContinueOnError)
+	configPath := fs.String("config", "config/dry-run.yaml", "operator config")
+	id := fs.String("id", "", "bill id")
+	yes := fs.Bool("yes", false, "confirm this one bill")
+	real := fs.Bool("i-understand-real-money", false, "required for mainnet")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*id) == "" {
+		return fmt.Errorf("bill approve requires --id")
+	}
+	cfg, err := treasury.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	row, err := business.ApproveBill(context.Background(), cfg, *id, business.BillFlags{
+		UnderstandRealMoney: *real, Yes: *yes,
+	})
+	if row != nil {
+		fmt.Printf("bill %s state=%s action=%s reason=%s hash=%s planner=%s vault=%s\n",
+			row.Code, row.State, row.Action, row.ReasonCode, row.DecisionHash, row.Planner, row.VaultTx)
+	}
+	return err
+}
+
+func billReopen(args []string) error {
+	return billPark(args, "bill reopen", business.ReopenBill)
+}
+
+func billClose(args []string) error {
+	return billPark(args, "bill close", business.CloseBill)
+}
+
+func billPark(args []string, name string, fn func(string, string) (*models.Bill, error)) error {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	configPath := fs.String("config", "config/dry-run.yaml", "operator config")
+	id := fs.String("id", "", "bill id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*id) == "" {
+		return fmt.Errorf("%s requires --id", name)
+	}
+	cfg, err := treasury.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	file := cfg.BillsFile
+	if file == "" {
+		file = business.DefaultBillsFile
+	}
+	row, err := fn(*id, file)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("bill %s state=%s\n", row.Code, row.State)
 	return nil
 }
 

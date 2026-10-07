@@ -66,7 +66,7 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		bill.Years = 1
 	}
 	if terminal(bill.State) || (bill.State == "escalated" && bill.VaultTx != "") {
-		return nil
+		return syncDecisionOutcome(bill)
 	}
 	if deps.save == nil {
 		deps.save = models.SaveBill
@@ -132,38 +132,40 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		if err := auditDecision(deps, bill, d.Disagree); err != nil {
 			return err
 		}
-		if err := deps.save(bill); err != nil {
+		if err := saveProgress(deps, bill); err != nil {
 			return err
 		}
 		if d.Action == treasury.ActionEscalate {
 			return submitEscalation(ctx, bill, deps, d, amount)
 		}
 	} else if bill.Action != treasury.ActionPay {
-		return nil
+		return syncDecisionOutcome(bill)
 	}
+	return executePay(ctx, bill, deps, cost, maxFee, amount)
+}
+
+func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, maxFee, amount *big.Int) error {
 	if bill.VaultTx == "" {
 		res, err := deps.vault(ctx, bill, amount, bill.DecisionHash)
 		if err != nil {
+			bill.State = "failed_vault"
 			if strings.Contains(err.Error(), "DecisionAlreadyUsed") {
-				bill.State = "failed_vault"
 				bill.Reason = "decision hash was already used"
-				_ = deps.save(bill)
+				_ = saveProgress(deps, bill)
 				return nil
 			}
-			bill.State = "failed_vault"
 			bill.Reason = err.Error()
-			_ = deps.save(bill)
+			_ = saveProgress(deps, bill)
 			return err
 		}
 		bill.VaultTx = res.TxHash
 		bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
 		if res.Status == "approval" || (res.RequestID != "" && res.Status != "paid" && res.Status != "simulated_paid" && res.Status != "dry_run_paid" && res.Status != "circle_confirmed") {
 			bill.State = "escalated"
-			_ = deps.save(bill)
-			return nil
+			return saveProgress(deps, bill)
 		}
 		bill.State = "vault_paid"
-		if err := deps.save(bill); err != nil {
+		if err := saveProgress(deps, bill); err != nil {
 			return err
 		}
 	}
@@ -183,7 +185,7 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		if err != nil {
 			bill.State = "failed_bridge"
 			bill.Reason = err.Error()
-			_ = deps.save(bill)
+			_ = saveProgress(deps, bill)
 			return err
 		}
 		bill.CCTPBurnTx = burned.BurnTx
@@ -196,7 +198,7 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		}
 		bill.BaseURL = explorerBase(deps.cfg.Base.ChainID, burned.MintTx)
 		bill.State = "bridged"
-		if err := deps.save(bill); err != nil {
+		if err := saveProgress(deps, bill); err != nil {
 			return err
 		}
 	}
@@ -205,7 +207,7 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		if err != nil {
 			bill.State = "failed_merchant"
 			bill.Reason = err.Error()
-			_ = deps.save(bill)
+			_ = saveProgress(deps, bill)
 			return err
 		}
 		bill.PorkbunCheckoutID = paid.CheckoutID
@@ -216,14 +218,15 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		if paid.KeptAsCredit {
 			bill.State = "kept_as_credit"
 			bill.PorkbunURL = "https://porkbun.com/account/domains"
-			_ = deps.save(bill)
+			if err := saveProgress(deps, bill); err != nil {
+				return err
+			}
 			return writeBillAudit(deps.audit, bill, "bill")
 		}
 		if paid.Pending || paid.OrderID == "" {
 			bill.State = "bridged"
 			bill.ReasonCode = "payment_pending"
-			_ = deps.save(bill)
-			return nil
+			return saveProgress(deps, bill)
 		}
 		bill.PorkbunOrderID = paid.OrderID
 		bill.State = "merchant_paid"
@@ -232,7 +235,7 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 	bill.PaidAt = time.Now().UTC().Format(time.RFC3339)
 	bill.PorkbunURL = "https://porkbun.com/account/domains"
 	bill.Evidence = evidence(bill, deps.policy.ChainID)
-	if err := deps.save(bill); err != nil {
+	if err := saveProgress(deps, bill); err != nil {
 		return err
 	}
 	return writeBillAudit(deps.audit, bill, "bill")
@@ -246,14 +249,14 @@ func submitEscalation(ctx context.Context, bill *models.Bill, deps billDeps, d t
 	if err != nil {
 		bill.State = "failed_vault"
 		bill.Reason = err.Error()
-		_ = deps.save(bill)
+		_ = saveProgress(deps, bill)
 		return err
 	}
 	bill.VaultTx = res.TxHash
 	bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
 	bill.State = "escalated"
 	bill.Action = treasury.ActionEscalate
-	return deps.save(bill)
+	return saveProgress(deps, bill)
 }
 
 func stop(bill *models.Bill, deps billDeps, action string, _ bool, code, reason string) error {
@@ -274,13 +277,14 @@ func stop(bill *models.Bill, deps billDeps, action string, _ bool, code, reason 
 	if err := auditDecision(deps, bill, strings.Contains(bill.RiskNotes, "llm_disagreed")); err != nil {
 		return err
 	}
-	if err := deps.save(bill); err != nil {
+	if err := saveProgress(deps, bill); err != nil {
 		return err
 	}
 	return writeBillAudit(deps.audit, bill, "bill")
 }
 
 func copyPlan(bill *models.Bill, d treasury.Decision) {
+	bill.Planner = empty(d.Planner, "rules")
 	bill.Action = d.Action
 	bill.ReasonCode = d.ReasonCode
 	bill.Reason = d.Reason
@@ -372,7 +376,7 @@ func explorerBase(chainID, tx string) string {
 func evidence(bill *models.Bill, chainID string) string {
 	raw, _ := json.MarshalIndent(map[string]any{
 		"bill_id": bill.Code, "vendor": bill.Vendor, "domain": bill.Domain, "kind": bill.Kind,
-		"quote_cents": bill.QuoteCents, "decision_hash": bill.DecisionHash, "action": bill.Action,
+		"quote_cents": bill.QuoteCents, "decision_hash": bill.DecisionHash, "planner": bill.Planner, "action": bill.Action,
 		"rationale": bill.Rationale, "model_id": bill.ModelID, "prompt_hash": bill.PromptHash,
 		"risk_notes": bill.RiskNotes, "confidence": bill.Confidence, "latency_ms": bill.LatencyMS,
 		"vault_tx": bill.VaultTx, "vault_chain": chainID,
@@ -456,6 +460,7 @@ func EvidenceMarkdown(bill *models.Bill) string {
 
 - state: %s
 - decision: %s
+- planner: %s
 - model: %s
 - rationale: %s
 - latency_ms: %d
@@ -464,5 +469,27 @@ func EvidenceMarkdown(bill *models.Bill) string {
 - base mint: %s
 - porkbun order: %s
 - mode: %s
-`, bill.Domain, bill.Code, bill.State, bill.DecisionHash, bill.ModelID, bill.Rationale, bill.LatencyMS, bill.VaultTx, bill.CCTPBurnTx, bill.BaseMintTx, bill.PorkbunOrderID, bill.Mode)
+`, bill.Domain, bill.Code, bill.State, bill.DecisionHash, bill.Planner, bill.ModelID, bill.Rationale, bill.LatencyMS, bill.VaultTx, bill.CCTPBurnTx, bill.BaseMintTx, bill.PorkbunOrderID, bill.Mode)
+}
+
+func saveProgress(deps billDeps, bill *models.Bill) error {
+	if deps.save == nil {
+		deps.save = models.SaveBill
+	}
+	if err := deps.save(bill); err != nil {
+		return err
+	}
+	return syncDecisionOutcome(bill)
+}
+
+func syncDecisionOutcome(bill *models.Bill) error {
+	if bill == nil || bill.DecisionHash == "" {
+		return nil
+	}
+	switch bill.State {
+	case "", "quoted", "decided", "paying":
+		return nil
+	default:
+		return models.UpdateDecisionOutcome(bill.DecisionHash, bill.State, bill.VaultTx)
+	}
 }

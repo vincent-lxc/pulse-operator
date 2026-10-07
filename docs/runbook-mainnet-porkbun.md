@@ -11,11 +11,13 @@ Default mode is `dry-run`. A mainnet payment needs every gate below at the same 
 
 The model may only pick an action the Go rules already allow (`pay`, `defer`, `escalate`, `reject`). It cannot raise a cap, add a payee, or spend past a budget. A disagreement is written to the audit as `planner_disagree`. Invalid JSON, a timeout, or a transport error becomes `escalate` and does **not** submit a transferring `pay`.
 
+A bill whose amount is above the vault balance escalates with `insufficient_balance` and does not call the vault. Dry-run subtracts what this process has already committed to pay from the fixture balance and the domains remaining budget, so a later bill in the same run sees the lower figures. On testnet and mainnet, a failed read of the balance, category, payee allowlist, or caps escalates with `observe_failed`. The bill is not treated as enabled, allowlisted, or uncapped, and the vault is not called.
+
 PolicyVault still enforces the category budget, per-transaction cap, payee allowlist, pause, and one-time `decisionHash` on chain. An in-policy `pay` transfers. An over-cap `pay` only opens an `ApprovalRequest` when the owner set over-limit mode to Escalate.
 
 Optional Jev review (`JEV_API_KEY`, `https://api.typesafe.ai/v1/systemone`, model `jev-latest`) can only narrow a `pay` to `escalate`. A Jev transport error is recorded and does not cancel a payment the rules and the primary model already accepted.
 
-The `decisionHash` is the keccak of canonical JSON that includes the model id, the planner action, the rationale, the prompt hash, the risk notes, the confidence, and whether the model disagreed. Latency and the raw response are stored on the bill and the decision row, not inside the hash.
+The `decisionHash` is the keccak of canonical JSON that includes the planner driver (`rules`, `gateway`, `error`, or `owner`), the model id, the planner action, the rationale, the prompt hash, the risk notes, the confidence, and whether the model disagreed. That driver is stored on the bill row as `planner`. Latency and the raw response are stored on the bill and the decision row, not inside the hash. After the bill leaves `decided`, the decision row's `outcome` is updated to the bill state (`done`, `escalated`, `closed`, `failed_vault`, and the other progress states).
 
 Prompts are built from the bill, the vault's remaining budget and cap, the balance, pending requests, and recent decisions. Private keys and API keys are redacted before the request is sent.
 
@@ -81,6 +83,18 @@ go run ./cmd/pulse bill list
 go run ./cmd/pulse bill export --id bill-register-pulseoperator-dev
 go run ./cmd/pulse bill return-float --config config/dry-run.yaml --amount 0.05
 ```
+
+An escalated bill with no vault transaction is not picked up by `bill run`. The owner can send it through the vault without another model call, put it back in the queue, or close it:
+
+```bash
+go run ./cmd/pulse bill approve --config config/dry-run.yaml --id bill-register-pulseoperator-dev --yes
+go run ./cmd/pulse bill reopen --config config/dry-run.yaml --id bill-register-pulseoperator-dev
+go run ./cmd/pulse bill close --config config/dry-run.yaml --id bill-register-pulseoperator-dev
+```
+
+`approve` still refuses when the chain read failed, the category is disabled, the payee is not allowlisted, the quote is missing, or the amount is above the vault balance. A bill that already has a vault transaction stays on Approvals. The same three commands are on the Bills admin page. Mainnet `approve` still needs `CONFIRM_MAINNET=1`, `--i-understand-real-money`, and `--yes`.
+
+The admin view (`./bin/pulse -view 43123`) listens on all interfaces. The framework has no bind-address option for that port. Firewall it to localhost, or use an SSH tunnel, before opening the UI. API and gRPC still bind to `listen` (default `127.0.0.1`).
 
 Testnet (Arc 5042002, Base Sepolia 84532). Point `porkbun.apiBase` at a local mock; Porkbun sandbox has no USDC, so x402 is not live there. This still dials the RPCs in the config.
 

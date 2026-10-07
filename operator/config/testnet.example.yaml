@@ -12,6 +12,7 @@ dueHorizon: 168h
 cooldown: 1h
 reserveFloorUSDC: "8.00"
 reserveTargetUSDC: "10.00"
+# API and gRPC bind here. The admin view (-view) listens on all interfaces; firewall it.
 listen: 127.0.0.1
 loopEnabled: false
 maxSpendPerRunUSDC: "15"

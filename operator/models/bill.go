@@ -21,6 +21,7 @@ type Bill struct {
 	State               string `json:"state" desc:"状态"`
 	Mode                string `json:"mode" desc:"模式"`
 	DecisionHash        string `json:"decision_hash" desc:"决策哈希"`
+	Planner             string `json:"planner" desc:"规划器"`
 	Action              string `json:"action" desc:"动作"`
 	ReasonCode          string `json:"reasonCode" desc:"原因码"`
 	Reason              string `json:"reason" desc:"原因"`

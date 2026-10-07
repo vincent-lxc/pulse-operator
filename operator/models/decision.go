@@ -85,6 +85,22 @@ func FindDecision(code string) (*DecisionRecord, error) {
 	return findDecision(code)
 }
 
+// UpdateDecisionOutcome 把已经落库的决策结果改成账单的最新状态。
+func UpdateDecisionOutcome(code, outcome, txHash string) error {
+	row, err := findDecision(code)
+	if err != nil || row == nil {
+		return err
+	}
+	if row.Outcome == outcome && (strings.TrimSpace(txHash) == "" || row.TxHash == txHash) {
+		return nil
+	}
+	row.Outcome = outcome
+	if strings.TrimSpace(txHash) != "" {
+		row.TxHash = txHash
+	}
+	return getDataAction().Update(row)
+}
+
 func findDecision(code string) (*DecisionRecord, error) {
 	if err := ensureModel(NewDecisionRecord()); err != nil {
 		return nil, err
