@@ -388,6 +388,48 @@ func TestPaidVaultClearsPendingAndApprovalKeepsIt(t *testing.T) {
 	}
 }
 
+func TestBlockedApproveLeavesHashedFields(t *testing.T) {
+	bill := escalateOffChain(t, "bill-keep-hash-"+t.Name())
+	before := *bill
+	log, err := treasury.OpenAudit(filepath.Join(t.TempDir(), "audit.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := payingDeps(t)
+	deps.audit = log
+	deps.facts = func(_ *models.Bill, _ int64, amount *big.Int) procurement.Facts {
+		return procurement.Facts{
+			CategoryEnabled: true, PayeeAllowed: true, DailyCap: 10, MonthlyLimit: 1,
+			Remaining: big.NewInt(50_000_000), PerTxCap: big.NewInt(20_000_000),
+			Balance: big.NewInt(20_000_000), Amount: amount,
+		}
+	}
+	deps.vault = func(context.Context, *models.Bill, *big.Int, string) (vaultResult, error) {
+		t.Fatal("blocked approve reached the vault")
+		return vaultResult{}, nil
+	}
+	if err := ownerPay(context.Background(), bill, deps, BillFlags{}); err == nil || !strings.Contains(err.Error(), "monthly_limit") {
+		t.Fatal(err)
+	}
+	if bill.DecisionHash != before.DecisionHash || bill.ReasonCode != before.ReasonCode || bill.Reason != before.Reason || bill.Rationale != before.Rationale || bill.Action != before.Action || bill.Planner != before.Planner {
+		t.Fatalf("hashed fields changed: code %s->%s rationale %q->%q hash %s->%s", before.ReasonCode, bill.ReasonCode, before.Rationale, bill.Rationale, before.DecisionHash, bill.DecisionHash)
+	}
+	again, err := treasury.DecisionHash(treasury.Canonical{
+		V: 2, AgentID: deps.policy.AgentID, ChainID: deps.policy.ChainID, Vault: deps.policy.Vault,
+		PayableID: bill.Code, Action: bill.Action, Category: bill.CategoryCode, Payee: deps.payee,
+		AmountUnits: bill.AmountUnits, ReasonCode: bill.ReasonCode, Planner: bill.Planner,
+		ModelID: bill.ModelID, PlannerAction: bill.PlannerAction, Rationale: bill.Rationale,
+		PromptHash: bill.PromptHash, RiskNotes: bill.RiskNotes, Confidence: bill.Confidence,
+	})
+	if err != nil || again != bill.DecisionHash {
+		t.Fatalf("stored %s rebuilt %s err %v", bill.DecisionHash, again, err)
+	}
+	raw, err := os.ReadFile(log.Path())
+	if err != nil || !strings.Contains(string(raw), "approve_blocked") || !strings.Contains(string(raw), "monthly_limit") {
+		t.Fatalf("audit %s err %v", raw, err)
+	}
+}
+
 func escalateFor(t *testing.T, code string, tune func(*billDeps), reason string) *models.Bill {
 	t.Helper()
 	bill := newOpenBill(t, code)

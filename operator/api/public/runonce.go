@@ -7,6 +7,7 @@ import (
 
 	"github.com/digitalwayhk/core/pkg/server/router"
 	servertypes "github.com/digitalwayhk/core/pkg/server/types"
+	"github.com/vincent-lxc/pulse-operator/operator/access"
 	"github.com/vincent-lxc/pulse-operator/operator/api/dto"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
@@ -22,7 +23,10 @@ func (own *RunOnce) Parse(servertypes.IRequest) error { return nil }
 func (own *RunOnce) Validation(servertypes.IRequest) error { return nil }
 
 // Do 执行一轮并返回决策条数。
-func (own *RunOnce) Do(servertypes.IRequest) (interface{}, error) {
+func (own *RunOnce) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	path := os.Getenv("OPERATOR_CONFIG")
 	if path == "" {
 		path = "config/dry-run.yaml"

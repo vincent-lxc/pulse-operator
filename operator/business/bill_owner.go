@@ -157,10 +157,9 @@ func ownerPay(ctx context.Context, bill *models.Bill, deps billDeps, flags BillF
 	}
 	hard := procurement.DecideHard(facts)
 	if ownerPayBlocked(hard, flags) {
-		bill.ReasonCode = hard.ReasonCode
-		bill.Reason = hard.Reason
-		bill.State = "escalated"
-		_ = saveProgress(deps, bill)
+		if err := auditApproveBlocked(deps, bill, hard); err != nil {
+			return err
+		}
 		return fmt.Errorf("%s: %s", hard.ReasonCode, hard.Reason)
 	}
 	rationale := "owner approved payment through the vault"
@@ -227,6 +226,23 @@ func ownerPayBlocked(hard procurement.Hard, flags BillFlags) bool {
 
 func capOverride(reason string) bool {
 	return reason == "max_bill" || reason == "max_spend_per_run"
+}
+
+func auditApproveBlocked(deps billDeps, bill *models.Bill, hard procurement.Hard) error {
+	if deps.audit == nil || bill == nil {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"bill_id": bill.Code, "decision_hash": bill.DecisionHash,
+		"reason_code": hard.ReasonCode, "reason": hard.Reason,
+	})
+	if err != nil {
+		return err
+	}
+	return deps.audit.Append(treasury.AuditEvent{
+		RunID: bill.Code, Kind: "approve_blocked", DecisionHash: bill.DecisionHash,
+		Outcome: hard.ReasonCode, Payload: payload,
+	})
 }
 
 func auditCapOverride(deps billDeps, bill *models.Bill, reasonCode, reason string) error {

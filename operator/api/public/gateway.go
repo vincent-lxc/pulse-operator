@@ -8,6 +8,7 @@ import (
 
 	"github.com/digitalwayhk/core/pkg/server/router"
 	servertypes "github.com/digitalwayhk/core/pkg/server/types"
+	"github.com/vincent-lxc/pulse-operator/operator/access"
 	"github.com/vincent-lxc/pulse-operator/operator/api/dto"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
@@ -51,7 +52,10 @@ func (own *GatewayHook) Validation(servertypes.IRequest) error {
 }
 
 // Do 解析通知。live 模式校验 Circle 签名；dry-run 接受未签名的本地样例。
-func (own *GatewayHook) Do(servertypes.IRequest) (interface{}, error) {
+func (own *GatewayHook) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	cfg, err := loadOperatorConfig()
 	if err != nil {
 		return nil, err

@@ -111,12 +111,18 @@ func (own *BillApprove) Do(req servertypes.IRequest) (interface{}, error) {
 	return billActionResponse(row), err
 }
 
-func (own *BillReopen) Do(servertypes.IRequest) (interface{}, error) {
+func (own *BillReopen) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	row, err := business.ReopenBill(own.Code, business.DefaultBillsFile)
 	return billActionResponse(row), err
 }
 
-func (own *BillClose) Do(servertypes.IRequest) (interface{}, error) {
+func (own *BillClose) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	row, err := business.CloseBill(own.Code, business.DefaultBillsFile)
 	return billActionResponse(row), err
 }

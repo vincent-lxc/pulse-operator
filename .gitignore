@@ -16,6 +16,7 @@ agent/coverage.out
 *.test
 operator/bin/
 operator/db/
+operator/api/manage/db/
 operator/data/
 operator/etc/
 operator/config/live.yaml

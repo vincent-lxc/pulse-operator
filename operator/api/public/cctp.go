@@ -8,6 +8,7 @@ import (
 
 	"github.com/digitalwayhk/core/pkg/server/router"
 	servertypes "github.com/digitalwayhk/core/pkg/server/types"
+	"github.com/vincent-lxc/pulse-operator/operator/access"
 	"github.com/vincent-lxc/pulse-operator/operator/api/dto"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
@@ -35,7 +36,10 @@ func (own *CCTPIn) Validation(servertypes.IRequest) error {
 }
 
 // Do 查询 Iris 并落库。dry-run 也会查询，因为这是显式的确认调用；没有网络时返回 Iris 的错误。
-func (own *CCTPIn) Do(servertypes.IRequest) (interface{}, error) {
+func (own *CCTPIn) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	cfg, err := loadOperatorConfig()
 	if err != nil {
 		return nil, err

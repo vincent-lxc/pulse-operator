@@ -26,13 +26,24 @@ func TestBillApproveHiddenOutsideDryRun(t *testing.T) {
 }
 
 func TestBillApproveDryRunRejectsLANAndOmitsRealMoneyConfirm(t *testing.T) {
+	source, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = os.RemoveAll(filepath.Join(source, "db"))
+	t.Cleanup(func() {
+		if _, statErr := os.Stat(filepath.Join(source, "db")); !os.IsNotExist(statErr) {
+			t.Errorf("sqlite left in %s/db", source)
+		}
+	})
+	t.Chdir(t.TempDir())
 	path := writeModeConfig(t, t.TempDir(), "dry-run")
 	t.Setenv("OPERATOR_CONFIG", path)
 	if !strings.Contains(routerPaths(NewBillManage().Routers()), "billapprove") {
 		t.Fatal("dry-run hid bill approve")
 	}
 	req := &http.Request{RemoteAddr: "172.30.0.2:54321", Header: make(http.Header)}
-	_, err := (&BillApprove{Code: "bill-x"}).Do(loopbackRequest{ip: "127.0.0.1", req: req})
+	_, err = (&BillApprove{Code: "bill-x"}).Do(loopbackRequest{ip: "127.0.0.1", req: req})
 	if err == nil || !strings.Contains(err.Error(), "loopback") {
 		t.Fatal(err)
 	}
@@ -46,6 +57,20 @@ func TestBillApproveHiddenWhenConfigMissing(t *testing.T) {
 	t.Setenv("OPERATOR_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
 	if strings.Contains(routerPaths(NewBillManage().Routers()), "billapprove") {
 		t.Fatal("missing config still exposes bill approve")
+	}
+}
+
+func TestBillCloseAndReopenRejectNonLoopback(t *testing.T) {
+	req := &http.Request{RemoteAddr: "172.30.0.2:9", Header: make(http.Header)}
+	caller := loopbackRequest{ip: "127.0.0.1", req: req}
+	if _, err := (&BillReopen{Code: "bill-x"}).Do(caller); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatal(err)
+	}
+	if _, err := (&BillClose{Code: "bill-x"}).Do(caller); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatal(err)
+	}
+	if _, err := (&BillClose{Code: "bill-x"}).Do(nil); err == nil {
+		t.Fatal("nil caller closed a bill")
 	}
 }
 
