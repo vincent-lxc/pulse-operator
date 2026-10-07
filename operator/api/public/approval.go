@@ -7,6 +7,7 @@ import (
 
 	"github.com/digitalwayhk/core/pkg/server/router"
 	servertypes "github.com/digitalwayhk/core/pkg/server/types"
+	"github.com/vincent-lxc/pulse-operator/operator/access"
 	"github.com/vincent-lxc/pulse-operator/operator/api/dto"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
@@ -28,10 +29,16 @@ func (own *Reject) Parse(req servertypes.IRequest) error  { return bindRequestID
 func (own *Approve) Validation(servertypes.IRequest) error { return requireRequestID(own.RequestID) }
 func (own *Reject) Validation(servertypes.IRequest) error  { return requireRequestID(own.RequestID) }
 
-func (own *Approve) Do(servertypes.IRequest) (interface{}, error) {
+func (own *Approve) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	return settle(own.RequestID, "approve")
 }
-func (own *Reject) Do(servertypes.IRequest) (interface{}, error) {
+func (own *Reject) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	return settle(own.RequestID, "reject")
 }
 

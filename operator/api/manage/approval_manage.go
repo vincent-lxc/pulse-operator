@@ -9,6 +9,7 @@ import (
 	servertypes "github.com/digitalwayhk/core/pkg/server/types"
 	managepkg "github.com/digitalwayhk/core/service/manage"
 	"github.com/digitalwayhk/core/service/manage/view"
+	"github.com/vincent-lxc/pulse-operator/operator/access"
 	"github.com/vincent-lxc/pulse-operator/operator/api/dto"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
@@ -87,10 +88,16 @@ func (own *Reject) Validation(servertypes.IRequest) error {
 	return requireManageRequest(own.RequestID)
 }
 
-func (own *Approve) Do(servertypes.IRequest) (interface{}, error) {
+func (own *Approve) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	return settleManage(own.RequestID, "approve")
 }
-func (own *Reject) Do(servertypes.IRequest) (interface{}, error) {
+func (own *Reject) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	return settleManage(own.RequestID, "reject")
 }
 

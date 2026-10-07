@@ -52,7 +52,7 @@ func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps
 	deps.facts = func(bill *models.Bill, cents int64, amount *big.Int) procurement.Facts {
 		facts := dryFacts(bill, cents, amount, cfg, nil)
 		observed, err := observeFacts(ctx, cfg, bill, deps.payee)
-		return applyObservation(facts, bill.CategoryCode, deps.payee, observed, err, deps.runSpent)
+		return applyObservation(facts, bill.CategoryCode, deps.payee, observed, err, deps.pendingSpend)
 	}
 	deps.vault = func(ctx context.Context, bill *models.Bill, amount *big.Int, hash string) (vaultResult, error) {
 		chain, closeChain, err := openChain(ctx, cfg, []treasury.Payable{{
@@ -124,7 +124,8 @@ func observeFacts(ctx context.Context, cfg treasury.Config, bill *models.Bill, p
 }
 
 // applyObservation 用链上快照覆盖报价事实。读失败时清空余额和上限，交给硬规则升级且不付款。
-func applyObservation(facts procurement.Facts, category, payee string, observed treasury.Snapshot, observeErr error, runSpent *big.Int) procurement.Facts {
+// pendingSpend 只含本轮已决定付款、但链上余额还没扣掉的金额。已经到账的支出留在观察值里，不再减一次。
+func applyObservation(facts procurement.Facts, category, payee string, observed treasury.Snapshot, observeErr error, pendingSpend *big.Int) procurement.Facts {
 	if observeErr != nil {
 		facts.ObserveFailed = true
 		facts.CategoryEnabled = false
@@ -135,7 +136,7 @@ func applyObservation(facts procurement.Facts, category, payee string, observed 
 		return facts
 	}
 	facts.ObserveFailed = false
-	facts.Balance = subFloor(observed.Balance, runSpent)
+	facts.Balance = subFloor(observed.Balance, pendingSpend)
 	cat, exists := observed.Categories[category]
 	if !exists {
 		facts.CategoryEnabled = false
@@ -145,7 +146,7 @@ func applyObservation(facts procurement.Facts, category, payee string, observed 
 		return facts
 	}
 	facts.CategoryEnabled = cat.Enabled
-	facts.Remaining = subFloor(cat.Remaining, runSpent)
+	facts.Remaining = subFloor(cat.Remaining, pendingSpend)
 	facts.PerTxCap = cat.PerTxCap
 	if len(cat.Payees) > 0 {
 		facts.PayeeAllowed = cat.Payees[treasury.NormalizeAddress(payee)]

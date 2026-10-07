@@ -41,8 +41,28 @@ func main() {
 	server.AddIService(&operatorsvc.Service{}, &servertypes.ServerOption{
 		Demo: &servertypes.DemoOption{File: admintitle.FS()},
 	})
+	if err := guardAdminView(); err != nil {
+		fmt.Fprintln(os.Stderr, "operator:", err)
+		os.Exit(1)
+	}
 	applyListenHost(listenHost())
 	server.Start()
+}
+
+func guardAdminView() error {
+	mode := "dry-run"
+	ack := os.Getenv("OPERATOR_ACK_EXPOSED_VIEW") == "1"
+	if path := os.Getenv("OPERATOR_CONFIG"); path != "" {
+		cfg, err := treasury.LoadConfig(path)
+		if err != nil {
+			return err
+		}
+		mode = cfg.Mode
+		if cfg.AcknowledgeExposedAdminView {
+			ack = true
+		}
+	}
+	return business.GuardExposedView(mode, business.ViewPortFromArgs(os.Args), ack)
 }
 
 func listenHost() string {

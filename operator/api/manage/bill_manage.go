@@ -3,11 +3,13 @@ package manage
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	servertypes "github.com/digitalwayhk/core/pkg/server/types"
 	managepkg "github.com/digitalwayhk/core/service/manage"
 	"github.com/digitalwayhk/core/service/manage/view"
+	"github.com/vincent-lxc/pulse-operator/operator/access"
 	"github.com/vincent-lxc/pulse-operator/operator/api/dto"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
@@ -30,9 +32,21 @@ func (*BillManage) GetList() interface{} {
 	return models.NewManageModelList[models.Bill]()
 }
 
-// Routers 暴露查看、查询，以及批准、重开和关闭。
+// Routers 暴露查看、查询、重开和关闭。账单批准按钮只在 dry-run 出现。
 func (own *BillManage) Routers() []servertypes.IRouter {
-	return []servertypes.IRouter{own.View, own.Search, &BillApprove{manage: own}, &BillReopen{manage: own}, &BillClose{manage: own}}
+	routes := []servertypes.IRouter{own.View, own.Search}
+	if billApproveButton() {
+		routes = append(routes, &BillApprove{manage: own})
+	}
+	return append(routes, &BillReopen{manage: own}, &BillClose{manage: own})
+}
+
+func billApproveButton() bool {
+	cfg, err := loadManageConfig()
+	if err != nil {
+		return false
+	}
+	return business.AdminBillApproveAllowed(cfg.Mode)
 }
 
 // ViewModel 设置菜单标题。
@@ -82,12 +96,18 @@ func (own *BillApprove) Validation(servertypes.IRequest) error { return requireB
 func (own *BillReopen) Validation(servertypes.IRequest) error  { return requireBillCode(own.Code) }
 func (own *BillClose) Validation(servertypes.IRequest) error   { return requireBillCode(own.Code) }
 
-func (own *BillApprove) Do(servertypes.IRequest) (interface{}, error) {
+func (own *BillApprove) Do(req servertypes.IRequest) (interface{}, error) {
 	cfg, err := loadManageConfig()
 	if err != nil {
 		return nil, err
 	}
-	row, err := business.ApproveBill(context.Background(), cfg, own.Code, business.BillFlags{UnderstandRealMoney: true, Yes: true})
+	if !business.AdminBillApproveAllowed(cfg.Mode) {
+		return nil, fmt.Errorf("bill approval is CLI-only in %s mode; run pulse bill approve --id with --yes", cfg.Mode)
+	}
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
+	row, err := business.ApproveBill(context.Background(), cfg, own.Code, business.BillFlags{})
 	return billActionResponse(row), err
 }
 

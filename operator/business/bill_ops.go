@@ -16,11 +16,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// BillFlags 是命令行带上的确认。
+// BillFlags 是命令行带上的确认。零值不会确认主网，也不会放宽上限。
 type BillFlags struct {
 	UnderstandRealMoney bool
 	Yes                 bool
 	Auto                bool
+	// OverrideCap 只放宽 max_bill 和 max_spend_per_run。月度限额和每日笔数不能放宽。
+	OverrideCap bool
+	// OverrideReason 随 OverrideCap 写入审计和决策理由，空字符串无效。
+	OverrideReason string
 }
 
 // DefaultBillsFile 是命令行账单账本。go run 的二进制目录每次都变，所以账本放在当前工作目录。
@@ -230,7 +234,7 @@ func depsFor(ctx context.Context, cfg treasury.Config) (billDeps, error) {
 	}
 	deps := billDeps{
 		cfg: cfg, policy: policy, payee: payee, buffer: buffer, plan: planFunc(cfg), audit: audit,
-		save: models.SaveBill, runSpent: big.NewInt(0),
+		save: models.SaveBill, runSpent: big.NewInt(0), pendingSpend: big.NewInt(0),
 	}
 	if cfg.Mode == "dry-run" || cfg.Mode == "" {
 		deps.quote = func(_ context.Context, bill *models.Bill) (int64, *big.Int, error) {

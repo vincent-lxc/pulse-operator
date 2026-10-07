@@ -3,6 +3,7 @@ package business
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
@@ -14,6 +15,12 @@ import (
 
 // ApproveBill 由所有者把一张离链升级的账单重新送进金库。不调用模型。
 func ApproveBill(ctx context.Context, cfg treasury.Config, id string, flags BillFlags) (*models.Bill, error) {
+	if flags.OverrideCap && strings.TrimSpace(flags.OverrideReason) == "" {
+		return nil, fmt.Errorf("bill approve --override-cap requires --override-reason")
+	}
+	if cfg.Mode != "" && cfg.Mode != "dry-run" && !flags.Yes {
+		return nil, fmt.Errorf("bill approve requires --yes for this one bill")
+	}
 	if !cycleMu.TryLock() {
 		return nil, models.NewBusinessError("operator cycle already running")
 	}
@@ -30,7 +37,7 @@ func ApproveBill(ctx context.Context, cfg treasury.Config, id string, flags Bill
 	if err != nil {
 		return nil, err
 	}
-	payErr := ownerPay(ctx, bill, deps)
+	payErr := ownerPay(ctx, bill, deps, flags)
 	if writeErr := writeBillLedger(file, bill); payErr == nil {
 		payErr = writeErr
 	}
@@ -46,6 +53,10 @@ func ReopenBill(id, billsFilePath string) (*models.Bill, error) {
 	bill, err := loadOneBill(id, billsFilePath)
 	if err != nil {
 		return nil, err
+	}
+	switch bill.State {
+	case "done", "merchant_paid", "kept_as_credit", "vault_paid", "bridged":
+		return nil, fmt.Errorf("bill is already paid")
 	}
 	if strings.TrimSpace(bill.VaultTx) != "" {
 		return nil, fmt.Errorf("bill already has a vault request; settle it on Approvals")
@@ -115,7 +126,7 @@ func CloseBill(id, billsFilePath string) (*models.Bill, error) {
 	return bill, nil
 }
 
-func ownerPay(ctx context.Context, bill *models.Bill, deps billDeps) error {
+func ownerPay(ctx context.Context, bill *models.Bill, deps billDeps, flags BillFlags) error {
 	if bill == nil {
 		return fmt.Errorf("bill is missing")
 	}
@@ -145,19 +156,26 @@ func ownerPay(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		facts.Amount = amount
 	}
 	hard := procurement.DecideHard(facts)
-	if ownerPayBlocked(hard) {
+	if ownerPayBlocked(hard, flags) {
 		bill.ReasonCode = hard.ReasonCode
 		bill.Reason = hard.Reason
 		bill.State = "escalated"
 		_ = saveProgress(deps, bill)
 		return fmt.Errorf("%s: %s", hard.ReasonCode, hard.Reason)
 	}
+	rationale := "owner approved payment through the vault"
+	if capOverride(hard.ReasonCode) {
+		if err := auditCapOverride(deps, bill, hard.ReasonCode, flags.OverrideReason); err != nil {
+			return err
+		}
+		rationale = "owner override of " + hard.ReasonCode + ": " + strings.TrimSpace(flags.OverrideReason)
+	}
 	d := treasury.Decision{
 		PayableID: bill.Code, Action: treasury.ActionPay, Submit: true,
 		ReasonCode: "owner_approved", Reason: "owner approved an off-chain escalation",
 		Category: bill.CategoryCode, Payee: deps.payee, Amount: amount,
 		Planner: "owner", ModelID: "owner", PlannerAction: treasury.ActionPay,
-		Rationale: "owner approved payment through the vault", Confidence: "1",
+		Rationale: rationale, Confidence: "1",
 	}
 	hash, err := treasury.DecisionHash(treasury.Canonical{
 		V: 2, AgentID: deps.policy.AgentID, ChainID: deps.policy.ChainID, Vault: deps.policy.Vault,
@@ -180,9 +198,7 @@ func ownerPay(ctx context.Context, bill *models.Bill, deps billDeps) error {
 	}
 	bill.DecisionHash = hash
 	copyPlan(bill, d)
-	if deps.runSpent != nil {
-		deps.runSpent.Add(deps.runSpent, amount)
-	}
+	commitSpend(deps, amount)
 	bill.State = "decided"
 	if err := recordBillDecision(bill, amount.String()); err != nil {
 		return err
@@ -196,13 +212,36 @@ func ownerPay(ctx context.Context, bill *models.Bill, deps billDeps) error {
 	return executePay(ctx, bill, deps, cost, maxFee, amount)
 }
 
-func ownerPayBlocked(hard procurement.Hard) bool {
+func ownerPayBlocked(hard procurement.Hard, flags BillFlags) bool {
 	switch hard.ReasonCode {
+	case "monthly_limit", "daily_cap":
+		return true
+	case "max_bill", "max_spend_per_run":
+		return !(flags.OverrideCap && strings.TrimSpace(flags.OverrideReason) != "")
 	case "observe_failed", "insufficient_balance", "unknown_category", "payee_not_allowlisted", "quote_missing":
 		return true
 	default:
 		return false
 	}
+}
+
+func capOverride(reason string) bool {
+	return reason == "max_bill" || reason == "max_spend_per_run"
+}
+
+func auditCapOverride(deps billDeps, bill *models.Bill, reasonCode, reason string) error {
+	if deps.audit == nil {
+		return fmt.Errorf("--override-cap requires auditLog so the reason is recorded")
+	}
+	payload, err := json.Marshal(map[string]any{
+		"bill_id": bill.Code, "reason_code": reasonCode, "reason": strings.TrimSpace(reason),
+	})
+	if err != nil {
+		return err
+	}
+	return deps.audit.Append(treasury.AuditEvent{
+		RunID: bill.Code, Kind: "owner_override", Outcome: reasonCode, Payload: payload,
+	})
 }
 
 func billsFile(cfg treasury.Config) string {

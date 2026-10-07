@@ -12,7 +12,9 @@ dueHorizon: 168h
 cooldown: 1h
 reserveFloorUSDC: "8.00"
 reserveTargetUSDC: "10.00"
-# API and gRPC bind here. The admin view (-view) listens on all interfaces; firewall it.
+# API and gRPC bind here. The admin view (-view, default 80) listens on all interfaces.
+# testtoken cannot be disabled and treats RFC1918 as local. Firewall the view, or pass -view 0.
+# Testnet still starts without acknowledgeExposedAdminView. Mainnet does not.
 listen: 127.0.0.1
 loopEnabled: false
 maxSpendPerRunUSDC: "15"

@@ -97,6 +97,8 @@ func billApprove(args []string) error {
 	id := fs.String("id", "", "bill id")
 	yes := fs.Bool("yes", false, "confirm this one bill")
 	real := fs.Bool("i-understand-real-money", false, "required for mainnet")
+	override := fs.Bool("override-cap", false, "pay this bill above max_bill or max_spend_per_run")
+	why := fs.String("override-reason", "", "required with --override-cap; stored in the audit and the decision rationale")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -108,7 +110,7 @@ func billApprove(args []string) error {
 		return err
 	}
 	row, err := business.ApproveBill(context.Background(), cfg, *id, business.BillFlags{
-		UnderstandRealMoney: *real, Yes: *yes,
+		UnderstandRealMoney: *real, Yes: *yes, OverrideCap: *override, OverrideReason: *why,
 	})
 	if row != nil {
 		fmt.Printf("bill %s state=%s action=%s reason=%s hash=%s planner=%s vault=%s\n",

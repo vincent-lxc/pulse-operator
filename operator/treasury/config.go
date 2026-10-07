@@ -50,6 +50,9 @@ type Config struct {
 	CCTP               BridgeConfig      `yaml:"cctpBridge"`
 	BillsFile          string            `yaml:"billsFile"`
 	MaxBillUSDC        string            `yaml:"maxBillUSDC"`
+	// AcknowledgeExposedAdminView 确认操作者知道管理界面监听所有网卡，且框架 testtoken 会向局域网签发管理员 token。
+	// 主网在 -view 不是 0 时，没有这项或 OPERATOR_ACK_EXPOSED_VIEW=1 就拒绝启动。
+	AcknowledgeExposedAdminView bool `yaml:"acknowledgeExposedAdminView"`
 }
 
 // PlannerConfig 选择规则或 Vercel AI Gateway。密钥只写环境变量名。

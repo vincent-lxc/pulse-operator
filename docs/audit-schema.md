@@ -84,7 +84,7 @@ locks that in.
 | Field | Notes |
 | --- | --- |
 | `run_id` | Cycle id, or the bill id for a domain payment |
-| `kind` | `liquidity`, `decision`, `execution`, `planner_disagree`, `bill` |
+| `kind` | `liquidity`, `decision`, `execution`, `planner_disagree`, `bill`, `owner_override` |
 | `decision_hash` | keccak of the canonical record below |
 | `tx_hash` | Present only on `execution` / after a send. Not part of the hash |
 | `payload` | The decision, including planner fields, or the bill evidence |
@@ -96,3 +96,5 @@ The hash does **not** include latency, the raw model body, the chain transaction
 The Decisions admin view shows `rationale` and `model_id` for treasury-loop decisions and for domain bills. Bills also have their own view, with Arc and Base explorer links when a real transaction hash exists.
 
 `planner_disagree` is an extra row when the model asked for an action the rules refused, or chose a narrower one, including a model `reject` of a bill the rules still allow. That reject is stored as `escalate` and does not close the bill. The submitted action is the one inside the hash.
+
+`owner_override` is written when `bill approve --override-cap` pays a bill that the rules stopped for `max_bill` or `max_spend_per_run`. The payload records `bill_id`, `reason_code`, and the `--override-reason` text. That same text is prefixed into the decision rationale before `decisionHash` is computed. Porkbun `monthly_limit` and `daily_cap` are not overridable, so they do not produce this row.

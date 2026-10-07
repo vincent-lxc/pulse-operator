@@ -42,19 +42,20 @@ type merchantResult struct {
 }
 
 type billDeps struct {
-	quote    func(context.Context, *models.Bill) (int64, *big.Int, error)
-	vault    func(context.Context, *models.Bill, *big.Int, string) (vaultResult, error)
-	burn     func(context.Context, *models.Bill, *big.Int, *big.Int) (burnResult, error)
-	merchant func(context.Context, *models.Bill) (merchantResult, error)
-	facts    func(*models.Bill, int64, *big.Int) procurement.Facts
-	plan     treasury.PlanFunc
-	cfg      treasury.Config
-	policy   treasury.Policy
-	payee    string
-	buffer   *big.Int
-	save     func(*models.Bill) error
-	audit    *treasury.AuditLog
-	runSpent *big.Int
+	quote        func(context.Context, *models.Bill) (int64, *big.Int, error)
+	vault        func(context.Context, *models.Bill, *big.Int, string) (vaultResult, error)
+	burn         func(context.Context, *models.Bill, *big.Int, *big.Int) (burnResult, error)
+	merchant     func(context.Context, *models.Bill) (merchantResult, error)
+	facts        func(*models.Bill, int64, *big.Int) procurement.Facts
+	plan         treasury.PlanFunc
+	cfg          treasury.Config
+	policy       treasury.Policy
+	payee        string
+	buffer       *big.Int
+	save         func(*models.Bill) error
+	audit        *treasury.AuditLog
+	runSpent     *big.Int
+	pendingSpend *big.Int
 }
 
 // AdvanceBill 把账单从报价推进到完成。已经完成的账单不会再次付款。
@@ -122,8 +123,8 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		if !d.Submit || (d.Action != treasury.ActionPay && d.Action != treasury.ActionEscalate) {
 			return stop(bill, deps, d.Action, false, d.ReasonCode, d.Reason)
 		}
-		if d.Action == treasury.ActionPay && deps.runSpent != nil {
-			deps.runSpent.Add(deps.runSpent, amount)
+		if d.Action == treasury.ActionPay {
+			commitSpend(deps, amount)
 		}
 		bill.State = "decided"
 		if err := recordBillDecision(bill, amount.String()); err != nil {
@@ -144,6 +145,37 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 	return executePay(ctx, bill, deps, cost, maxFee, amount)
 }
 
+func commitSpend(deps billDeps, amount *big.Int) {
+	if amount == nil {
+		return
+	}
+	if deps.runSpent != nil {
+		deps.runSpent.Add(deps.runSpent, amount)
+	}
+	if deps.pendingSpend != nil {
+		deps.pendingSpend.Add(deps.pendingSpend, amount)
+	}
+}
+
+func releaseSettled(deps billDeps, amount *big.Int) {
+	if deps.pendingSpend == nil || amount == nil || amount.Sign() <= 0 {
+		return
+	}
+	deps.pendingSpend.Sub(deps.pendingSpend, amount)
+	if deps.pendingSpend.Sign() < 0 {
+		deps.pendingSpend.SetInt64(0)
+	}
+}
+
+func vaultTransferred(status string) bool {
+	switch status {
+	case "paid", "simulated_paid", "dry_run_paid", "circle_confirmed":
+		return true
+	default:
+		return false
+	}
+}
+
 func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, maxFee, amount *big.Int) error {
 	if bill.VaultTx == "" {
 		res, err := deps.vault(ctx, bill, amount, bill.DecisionHash)
@@ -160,9 +192,12 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 		}
 		bill.VaultTx = res.TxHash
 		bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
-		if res.Status == "approval" || (res.RequestID != "" && res.Status != "paid" && res.Status != "simulated_paid" && res.Status != "dry_run_paid" && res.Status != "circle_confirmed") {
+		if res.Status == "approval" || (res.RequestID != "" && !vaultTransferred(res.Status)) {
 			bill.State = "escalated"
 			return saveProgress(deps, bill)
+		}
+		if vaultTransferred(res.Status) {
+			releaseSettled(deps, amount)
 		}
 		bill.State = "vault_paid"
 		if err := saveProgress(deps, bill); err != nil {
