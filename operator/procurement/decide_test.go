@@ -39,6 +39,27 @@ func TestDecideHardPriceDriftDoesNotSubmit(t *testing.T) {
 	}
 }
 
+func TestDecideHardMaxBillAndRunCapEscalateWithoutSubmit(t *testing.T) {
+	overBill := DecideHard(Facts{
+		CategoryEnabled: true, PayeeAllowed: true,
+		Amount: big.NewInt(20_000_000), Remaining: big.NewInt(30_000_000), PerTxCap: big.NewInt(30_000_000),
+		QuoteCents: 875, MonthlyLimit: 10000, DailyCap: 10,
+		MaxBill: big.NewInt(15_000_000),
+	})
+	if overBill.Action != "escalate_to_human" || overBill.Submit || overBill.ReasonCode != "max_bill" {
+		t.Fatalf("%+v", overBill)
+	}
+	overRun := DecideHard(Facts{
+		CategoryEnabled: true, PayeeAllowed: true,
+		Amount: big.NewInt(8_000_000), Remaining: big.NewInt(30_000_000), PerTxCap: big.NewInt(15_000_000),
+		QuoteCents: 875, MonthlyLimit: 10000, DailyCap: 10,
+		MaxSpend: big.NewInt(10_000_000), RunSpent: big.NewInt(4_000_000),
+	})
+	if overRun.Action != "escalate_to_human" || overRun.Submit || overRun.ReasonCode != "max_spend_per_run" {
+		t.Fatalf("%+v", overRun)
+	}
+}
+
 func TestDecideHardDailyCapDoesNotSubmit(t *testing.T) {
 	got := DecideHard(Facts{
 		CategoryEnabled: true, PayeeAllowed: true,

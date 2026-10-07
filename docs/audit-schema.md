@@ -91,6 +91,8 @@ locks that in.
 
 Operator `decisionHash` version 2 covers, in struct order: `v`, `agent_id`, `chain_id`, `vault`, `payable_id`, `action`, `category`, `payee`, `amount_units`, `reason_code`, `planner`, `model_id`, `planner_action`, `rationale`, `prompt_hash`, `risk_notes`, `confidence`, `disagree`.
 
-The hash does **not** include latency, the raw model body, the chain transaction, Circle's transaction id, or the outcome. Those are stored on the decision row and in the JSONL payload so a payment can still be tied to the model's wording. The Decisions admin view shows `rationale` and `model_id`. Domain bills are on the Bills view with Arc and Base explorer links when a real transaction hash exists.
+The hash does **not** include latency, the raw model body, the chain transaction, Circle's transaction id, or the outcome. Those are stored on the decision row and in the JSONL payload (`latency_ms` is on the bill evidence and on a `planner_disagree` row). `risk_notes` inside the hash is the same string stored on the bill: disagreement text is appended before the hash, not after.
 
-`planner_disagree` is an extra row when the model asked for an action the rules refused, or chose a narrower one. The submitted action is the one inside the hash.
+The Decisions admin view shows `rationale` and `model_id` for treasury-loop decisions and for domain bills. Bills also have their own view, with Arc and Base explorer links when a real transaction hash exists.
+
+`planner_disagree` is an extra row when the model asked for an action the rules refused, or chose a narrower one, including a model `reject` of a bill the rules still allow. That reject is stored as `escalate` and does not close the bill. The submitted action is the one inside the hash.

@@ -67,7 +67,7 @@ The operator's daily cap defaults to 10 checkouts. That is **our** limit. The Po
 
 7. Export `CONFIRM_MAINNET=1`, `AI_GATEWAY_API_KEY` (or keep `planner.driver: rules`), `PORKBUN_API_KEY`, `PORKBUN_SECRET_API_KEY`, `ARC_RPC_URL`, `BASE_RPC_URL`, Circle or `PROCUREMENT_PRIVATE_KEY` / `OPERATOR_PRIVATE_KEY`. Put key files at mode 0600. Do not commit them.
 
-8. Set `maxSpendPerRunUSDC` and `maxBillUSDC`. Mainnet refuses to run without both.
+8. Set `maxSpendPerRunUSDC` and `maxBillUSDC`. Mainnet refuses to run without both. Those caps are also enforced on each bill: one bill over `maxBillUSDC`, or a run whose bills would pass `maxSpendPerRunUSDC`, escalates and does not transfer. Porkbun keys may be env vars or mode-0600 files (`apiKeyFile`, `secretFile`). `--years` must be 1; Porkbun charges the minimum term, so a multiplied quote would not match the charge. A register and a renewal of the same domain are `bill-register-<name>` and `bill-renew-<name>`. x402 typed data is signed with the Base wallet (`CIRCLE_PROCUREMENT_BASE_WALLET_ID`) and rejected unless the recovered signer is the payer.
 
 ## Commands
 
@@ -76,9 +76,9 @@ Dry-run (no network writes, fixture prices, synthetic ids):
 ```bash
 cd operator
 go run ./cmd/pulse bill add porkbun --domain pulseoperator.dev
-go run ./cmd/pulse bill run --config config/dry-run.yaml --id bill-pulseoperator-dev
+go run ./cmd/pulse bill run --config config/dry-run.yaml --id bill-register-pulseoperator-dev
 go run ./cmd/pulse bill list
-go run ./cmd/pulse bill export --id bill-pulseoperator-dev
+go run ./cmd/pulse bill export --id bill-register-pulseoperator-dev
 go run ./cmd/pulse bill return-float --config config/dry-run.yaml --amount 0.05
 ```
 
@@ -86,7 +86,7 @@ Testnet (Arc 5042002, Base Sepolia 84532). Point `porkbun.apiBase` at a local mo
 
 ```bash
 cd operator
-go run ./cmd/pulse bill run --config config/testnet.example.yaml --id bill-pulseoperator-dev --yes
+go run ./cmd/pulse bill run --config config/testnet.example.yaml --id bill-register-pulseoperator-dev --yes
 ```
 
 Mainnet, one bill, interactive confirm:
@@ -95,7 +95,7 @@ Mainnet, one bill, interactive confirm:
 cd operator
 CONFIRM_MAINNET=1 go run ./cmd/pulse bill run \
   --config config/mainnet.yaml \
-  --id bill-pulseoperator-dev \
+  --id bill-register-pulseoperator-dev \
   --i-understand-real-money --yes
 ```
 
@@ -103,7 +103,7 @@ Several bills in one process require `--auto` together with the spend caps. `--y
 
 ## Idempotency
 
-The decision hash is stored before `PolicyVault.pay`. A retry of a `decided` bill reuses it. `DecisionAlreadyUsed` marks the bill `failed_vault` and does not mint another hash. A burn transaction that is already stored is polled on Iris instead of burned again. A Porkbun `PAYMENT_IN_PROGRESS` or `PAYMENT_PENDING` does not sign another x402 payload. If registration fails after the transfer, the money stays as Porkbun credit (`kept_as_credit`); retry that bill without `payWith`.
+The decision hash is stored before `PolicyVault.pay`. A retry of a `decided` bill reuses it. `DecisionAlreadyUsed` marks the bill `failed_vault` and does not mint another hash. The burn transaction hash is saved as soon as it is broadcast, before Iris is polled; a retry that already has `CCTPBurnTx` only polls. A model `reject` of a bill the rules still allow becomes `escalate` (the bill stays open for a person) and the stored `risk_notes` are exactly the notes inside `decisionHash`. A Porkbun `PAYMENT_IN_PROGRESS` or `PAYMENT_PENDING` does not sign another x402 payload. If registration fails after the transfer, the money stays as Porkbun credit (`kept_as_credit`); retry that bill without `payWith`.
 
 ## If something sticks
 

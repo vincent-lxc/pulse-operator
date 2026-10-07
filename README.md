@@ -153,10 +153,10 @@ Domain bills (Porkbun register/renew, paid in USDC via x402 after a CCTP bridge 
 ```bash
 cd operator
 go run ./cmd/pulse bill add porkbun --domain pulseoperator.dev
-go run ./cmd/pulse bill run --config config/dry-run.yaml --id bill-pulseoperator-dev
+go run ./cmd/pulse bill run --config config/dry-run.yaml --id bill-register-pulseoperator-dev
 ```
 
-**The model does not hold the money.** With `planner.driver: gateway` the Vercel AI Gateway model (`openai/gpt-5.4-nano` by default, key `AI_GATEWAY_API_KEY`) chooses `pay`, `defer`, `escalate`, or `reject`, plus a rationale. Go then drops any choice the deterministic rules do not already allow. It cannot raise a category cap, add a payee, or exceed a budget. Bad JSON, a timeout, or an HTTP error fail closed: a would-be payment is recorded as `escalate` and is not submitted. `planner.driver: rules` is the default and what CI runs; it does not call a model.
+**The model does not hold the money.** With `planner.driver: gateway` the Vercel AI Gateway model (`openai/gpt-5.4-nano` by default, key `AI_GATEWAY_API_KEY`) chooses `pay`, `defer`, `escalate`, or `reject`, plus a rationale. The bill prompt includes the domain, the quote, the vault balance, and the category caps. Go then drops any choice the deterministic rules do not already allow. It cannot raise a category cap, add a payee, or exceed a budget. A model `reject` of a bill the rules still allow is stored as `escalate`, not a closed bill. Bad JSON, a timeout, or an HTTP error fail closed: a would-be payment is recorded as `escalate` and is not submitted. `planner.driver: rules` is the default and what CI runs; it does not call a model. `maxBillUSDC` and `maxSpendPerRunUSDC` escalate a bill that would pass them, in every mode.
 
 **The contract is still the authority.** `PolicyVault.pay` enforces the budget, the per-transaction cap, the payee allowlist, pause, and a single-use `decisionHash`. That hash now includes the model id and the rationale, so the on-chain payment points at the reasoning that was actually used. An optional Jev review (`JEV_API_KEY`) can only narrow a pay to escalate; if Jev is down, the payment is not blocked for that reason.
 

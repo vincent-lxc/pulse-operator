@@ -50,9 +50,23 @@ func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps
 		return order.CostCents, fee, nil
 	}
 	deps.facts = func(bill *models.Bill, cents int64, amount *big.Int) procurement.Facts {
-		facts := dryFacts(bill, cents, amount, cfg)
-		facts.CategoryEnabled = true
-		facts.PayeeAllowed = true
+		facts := dryFacts(bill, cents, amount, cfg, deps.runSpent)
+		if observed, ok := observeFacts(ctx, cfg, bill, deps.payee); ok {
+			facts.Balance = observed.Balance
+			if cat, exists := observed.Categories[bill.CategoryCode]; exists {
+				facts.CategoryEnabled = cat.Enabled
+				facts.Remaining = cat.Remaining
+				facts.PerTxCap = cat.PerTxCap
+				if len(cat.Payees) > 0 {
+					facts.PayeeAllowed = cat.Payees[treasury.NormalizeAddress(deps.payee)]
+				}
+			}
+			return facts
+		}
+		if !facts.CategoryEnabled {
+			facts.CategoryEnabled = true
+			facts.PayeeAllowed = true
+		}
 		return facts
 	}
 	deps.vault = func(ctx context.Context, bill *models.Bill, amount *big.Int, hash string) (vaultResult, error) {
@@ -75,7 +89,13 @@ func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps
 		return vaultResult{TxHash: res.TxHash, RequestID: res.RequestID, Status: status}, err
 	}
 	deps.burn = func(ctx context.Context, bill *models.Bill, cost, maxFee *big.Int) (burnResult, error) {
-		return liveBurn(ctx, cfg, bill, cost, maxFee)
+		return liveBurn(ctx, cfg, bill, cost, maxFee, func(tx string) error {
+			bill.CCTPBurnTx = tx
+			if deps.save == nil {
+				return nil
+			}
+			return deps.save(bill)
+		})
 	}
 	deps.merchant = func(ctx context.Context, bill *models.Bill) (merchantResult, error) {
 		return liveMerchant(ctx, cfg, client, bill)
@@ -104,9 +124,29 @@ func quoteForwardFee(ctx context.Context, cfg treasury.Config, needed *big.Int) 
 	return maxFee, err
 }
 
-func liveBurn(ctx context.Context, cfg treasury.Config, bill *models.Bill, cost, maxFee *big.Int) (burnResult, error) {
+func observeFacts(ctx context.Context, cfg treasury.Config, bill *models.Bill, payee string) (treasury.Snapshot, bool) {
+	if cfg.Mode == "" || cfg.Mode == "dry-run" {
+		return treasury.Snapshot{}, false
+	}
+	chain, closeChain, err := openChain(ctx, cfg, []treasury.Payable{{
+		ID: bill.Code, Category: bill.CategoryCode, Payee: payee, Due: time.Now().UTC(), Status: "pending",
+	}})
+	if err != nil {
+		return treasury.Snapshot{}, false
+	}
+	defer closeChain()
+	snap, err := chain.Observe(ctx)
+	if err != nil {
+		return treasury.Snapshot{}, false
+	}
+	return snap, true
+}
+
+var pollBurnMessages = pollIris
+
+func liveBurn(ctx context.Context, cfg treasury.Config, bill *models.Bill, cost, maxFee *big.Int, save func(string) error) (burnResult, error) {
 	if bill.CCTPBurnTx != "" {
-		msg, err := pollIris(ctx, cfg, bill.CCTPBurnTx)
+		msg, err := pollBurnMessages(ctx, cfg, bill.CCTPBurnTx)
 		if err != nil {
 			return burnResult{BurnTx: bill.CCTPBurnTx}, err
 		}
@@ -168,20 +208,30 @@ func liveBurn(ctx context.Context, cfg treasury.Config, bill *models.Bill, cost,
 	if err != nil {
 		return burnResult{CircleTxID: circleID}, err
 	}
+	return commitBurn(ctx, cfg, burnTx, circleID, feeNow, save)
+}
+
+// commitBurn 先落库 burn 交易，再等 Iris。重试看到 CCTPBurnTx 时只轮询。
+func commitBurn(ctx context.Context, cfg treasury.Config, burnTx, circleID string, fee *big.Int, save func(string) error) (burnResult, error) {
+	if save != nil {
+		if err := save(burnTx); err != nil {
+			return burnResult{BurnTx: burnTx, ForwardFee: fee.String(), CircleTxID: circleID}, err
+		}
+	}
 	wait, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	msg, err := pollIris(wait, cfg, burnTx)
+	msg, err := pollBurnMessages(wait, cfg, burnTx)
 	if err != nil {
-		return burnResult{BurnTx: burnTx, ForwardFee: feeNow.String(), CircleTxID: circleID}, err
+		return burnResult{BurnTx: burnTx, ForwardFee: fee.String(), CircleTxID: circleID}, err
 	}
 	mint := msg.ForwardTxHash
 	if mint == "" && !cfg.ForwardCCTP() {
 		mint, err = receiveOnBase(ctx, cfg, msg)
 		if err != nil {
-			return burnResult{BurnTx: burnTx, MessageHash: msg.Message, Nonce: msg.EventNonce, ForwardFee: feeNow.String(), CircleTxID: circleID}, err
+			return burnResult{BurnTx: burnTx, MessageHash: msg.Message, Nonce: msg.EventNonce, ForwardFee: fee.String(), CircleTxID: circleID}, err
 		}
 	}
-	return burnResult{BurnTx: burnTx, MintTx: mint, MessageHash: msg.Message, Nonce: msg.EventNonce, ForwardFee: feeNow.String(), CircleTxID: circleID}, nil
+	return burnResult{BurnTx: burnTx, MintTx: mint, MessageHash: msg.Message, Nonce: msg.EventNonce, ForwardFee: fee.String(), CircleTxID: circleID}, nil
 }
 
 func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.Porkbun, bill *models.Bill) (merchantResult, error) {
@@ -223,9 +273,9 @@ func merchantSigner(cfg treasury.Config) (func(procurement.Accept, time.Time) (p
 	if err != nil {
 		return nil, err
 	}
-	walletID, err := treasury.LoadSecret(cfg.Procurement.WalletIDEnv, cfg.Procurement.WalletIDFile)
+	walletID, err := baseWalletID(cfg)
 	if err != nil || walletID == "" {
-		return nil, fmt.Errorf("procurement signer missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.WalletIDEnv)
+		return nil, fmt.Errorf("procurement signer missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.BaseWalletIDEnv)
 	}
 	return func(item procurement.Accept, now time.Time) (procurement.Payment, error) {
 		payer := common.HexToAddress(cfg.Procurement.BaseAddress)
@@ -236,12 +286,20 @@ func merchantSigner(cfg treasury.Config) (func(procurement.Accept, time.Time) (p
 		if err != nil {
 			return procurement.Payment{}, err
 		}
-		sig, err := wallets.SignTypedData(context.Background(), walletID, "", cfg.Circle.Blockchain, typed)
+		sig, err := wallets.SignTypedData(context.Background(), walletID, payer.Hex(), treasury.BlockchainForBase(cfg.Base.ChainID, cfg.Mode), typed)
 		if err != nil {
 			return procurement.Payment{}, err
 		}
-		return procurement.FinishPayment(item, payer, auth, sig, extra), nil
+		return procurement.FinishPayment(item, payer, auth, sig, extra)
 	}, nil
+}
+
+func baseWalletID(cfg treasury.Config) (string, error) {
+	id, err := treasury.LoadSecret(cfg.Procurement.BaseWalletIDEnv, cfg.Procurement.BaseWalletIDFile)
+	if err != nil || id != "" {
+		return id, err
+	}
+	return treasury.LoadSecret(cfg.Procurement.WalletIDEnv, cfg.Procurement.WalletIDFile)
 }
 
 func sendProcurement(ctx context.Context, cfg treasury.Config, to common.Address, data []byte, abiSig string, params []string, idem string) (string, string, error) {

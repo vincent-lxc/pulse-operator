@@ -41,19 +41,19 @@ func AddBill(vendor, domain, kind string, years int) (*models.Bill, error) {
 	if kind == "" {
 		kind = "domain_register"
 	}
-	if years <= 0 {
-		years = 1
+	if years != 1 {
+		return nil, fmt.Errorf("porkbun bills use a 1 year term; omit --years or pass --years 1")
 	}
 	cents, _ := procurement.FixtureQuoteCents(domain, kind)
 	row := models.NewBill()
-	row.Code = "bill-" + strings.ReplaceAll(domain, ".", "-")
+	row.Code = BillCode(domain, kind)
 	row.Vendor = vendor
 	row.Domain = domain
 	row.Kind = kind
-	row.Years = years
+	row.Years = 1
 	row.CategoryCode = "domains"
 	row.State = "quoted"
-	row.QuoteCents = cents * int64(years)
+	row.QuoteCents = cents
 	row.Currency = "USDC"
 	saved, err := models.InsertBill(row)
 	if err != nil {
@@ -126,24 +126,41 @@ func selectBills(ids []string) ([]*models.Bill, error) {
 	for _, id := range ids {
 		want[id] = true
 	}
+	found := map[string]bool{}
 	var picked []*models.Bill
 	for _, row := range rows {
 		if want[row.Code] || want[row.Domain] {
 			picked = append(picked, row)
-			delete(want, row.Code)
-			delete(want, row.Domain)
+			found[row.Code] = true
+			found[row.Domain] = true
 		}
 	}
-	if len(want) > 0 {
-		return nil, fmt.Errorf("bill not found")
+	for id := range want {
+		if !found[id] {
+			return nil, fmt.Errorf("bill not found")
+		}
 	}
 	return picked, nil
 }
 
+// BillCode 把类型写进编号，注册和续费可以同时存在。
+func BillCode(domain, kind string) string {
+	tag := "register"
+	if strings.Contains(strings.ToLower(kind), "renew") {
+		tag = "renew"
+	}
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	return "bill-" + tag + "-" + strings.ReplaceAll(domain, ".", "-")
+}
+
 func authorizeBills(ctx context.Context, cfg treasury.Config, flags BillFlags, count int) error {
+	ready, err := porkbunReady(cfg)
+	if err != nil && cfg.Mode == "mainnet" {
+		return err
+	}
 	gate := procurement.Gate{
 		Mode: cfg.Mode, Vault: cfg.Vault, Procurement: cfg.Procurement.Address,
-		BaseProcurement: cfg.Procurement.BaseAddress, PorkbunKey: os.Getenv(cfg.Porkbun.APIKeyEnv) != "",
+		BaseProcurement: cfg.Procurement.BaseAddress, PorkbunKey: ready,
 		ConfirmMainnetEnv: os.Getenv("CONFIRM_MAINNET") == "1",
 	}
 	if max, err := treasury.ParseUSDCAllowZero(cfg.MaxSpendPerRunUSDC); err == nil {
@@ -182,6 +199,18 @@ func authorizeBills(ctx context.Context, cfg treasury.Config, flags BillFlags, c
 	})
 }
 
+func porkbunReady(cfg treasury.Config) (bool, error) {
+	key, err := treasury.LoadSecret(cfg.Porkbun.APIKeyEnv, cfg.Porkbun.APIKeyFile)
+	if err != nil {
+		return false, err
+	}
+	secret, err := treasury.LoadSecret(cfg.Porkbun.SecretEnv, cfg.Porkbun.SecretFile)
+	if err != nil {
+		return false, err
+	}
+	return key != "" && secret != "", nil
+}
+
 func depsFor(ctx context.Context, cfg treasury.Config) (billDeps, error) {
 	buffer, err := treasury.ParseUSDCAllowZero(cfg.Porkbun.FeeBufferUSDC)
 	if err != nil {
@@ -201,7 +230,7 @@ func depsFor(ctx context.Context, cfg treasury.Config) (billDeps, error) {
 	}
 	deps := billDeps{
 		cfg: cfg, policy: policy, payee: payee, buffer: buffer, plan: planFunc(cfg), audit: audit,
-		save: models.SaveBill,
+		save: models.SaveBill, runSpent: big.NewInt(0),
 	}
 	if cfg.Mode == "dry-run" || cfg.Mode == "" {
 		deps.quote = func(_ context.Context, bill *models.Bill) (int64, *big.Int, error) {
@@ -209,10 +238,10 @@ func depsFor(ctx context.Context, cfg treasury.Config) (billDeps, error) {
 			if !ok {
 				return 0, nil, fmt.Errorf("no fixture price for %s", bill.Domain)
 			}
-			return cents * int64(max(bill.Years, 1)), big.NewInt(54_050), nil
+			return cents, big.NewInt(54_050), nil
 		}
 		deps.facts = func(bill *models.Bill, cents int64, amount *big.Int) procurement.Facts {
-			return dryFacts(bill, cents, amount, cfg)
+			return dryFacts(bill, cents, amount, cfg, deps.runSpent)
 		}
 		deps.vault = func(_ context.Context, bill *models.Bill, _ *big.Int, _ string) (vaultResult, error) {
 			return vaultResult{TxHash: "dry-vault-" + bill.Code, Status: "paid"}, nil
@@ -228,15 +257,43 @@ func depsFor(ctx context.Context, cfg treasury.Config) (billDeps, error) {
 	return liveDeps(ctx, cfg, deps)
 }
 
-func dryFacts(bill *models.Bill, cents int64, amount *big.Int, cfg treasury.Config) procurement.Facts {
+func dryFacts(bill *models.Bill, cents int64, amount *big.Int, cfg treasury.Config, runSpent *big.Int) procurement.Facts {
 	spent, daily := billUsage(bill.Code)
-	return procurement.Facts{
-		CategoryEnabled: true, PayeeAllowed: true, Amount: amount, QuoteCents: cents,
-		Remaining: big.NewInt(1_000_000_000), PerTxCap: big.NewInt(1_000_000_000),
+	facts := procurement.Facts{
+		PayeeAllowed: true, Amount: amount, QuoteCents: cents,
 		MonthlySpent: spent, MonthlyLimit: cfg.Porkbun.MonthlyLimitCents,
 		DailyCount: daily, DailyCap: cfg.Porkbun.DailyCap,
 		ToleranceCents: cfg.Porkbun.PriceToleranceCents,
+		MaxBill:        optionalUSDC(cfg.MaxBillUSDC), MaxSpend: optionalUSDC(cfg.MaxSpendPerRunUSDC),
 	}
+	if runSpent != nil {
+		facts.RunSpent = new(big.Int).Set(runSpent)
+	}
+	path := cfg.VaultFixture
+	if path == "" {
+		return facts
+	}
+	snap, err := treasury.LoadFixture(path)
+	if err != nil {
+		return facts
+	}
+	facts.Balance = snap.Balance
+	cat, ok := snap.Categories["domains"]
+	if !ok || !cat.Enabled {
+		return facts
+	}
+	facts.CategoryEnabled = true
+	facts.Remaining = cat.Remaining
+	facts.PerTxCap = cat.PerTxCap
+	return facts
+}
+
+func optionalUSDC(raw string) *big.Int {
+	n, err := treasury.ParseUSDCAllowZero(raw)
+	if err != nil || n == nil || n.Sign() <= 0 {
+		return nil
+	}
+	return n
 }
 
 func billUsage(skip string) (int64, int) {
@@ -306,7 +363,7 @@ func importBillFile(path string) error {
 		}
 		code := item.ID
 		if code == "" {
-			code = "bill-" + strings.ReplaceAll(strings.ToLower(item.Domain), ".", "-")
+			code = BillCode(item.Domain, item.Kind)
 		}
 		existing, err := models.FindBill(code)
 		if err != nil {
@@ -326,10 +383,7 @@ func importBillFile(path string) error {
 		if row.Kind == "" {
 			row.Kind = "domain_register"
 		}
-		row.Years = item.Years
-		if row.Years <= 0 {
-			row.Years = 1
-		}
+		row.Years = 1
 		row.CategoryCode = "domains"
 		row.Currency = "USDC"
 		row.QuoteCents = item.QuoteCents
@@ -375,7 +429,7 @@ func upsertBillFile(path string, row *models.Bill) error {
 	}
 	replaced := false
 	for i := range file.Bills {
-		if file.Bills[i].ID == row.Code || file.Bills[i].Domain == row.Domain {
+		if file.Bills[i].ID == row.Code {
 			file.Bills[i] = disk
 			replaced = true
 			break
@@ -423,7 +477,7 @@ func ExportBill(id string) (string, string, error) {
 		return "", "", fmt.Errorf("bill not found")
 	}
 	if row.Evidence == "" {
-		row.Evidence = evidence(row)
+		row.Evidence = evidence(row, "")
 	}
 	return row.Evidence, EvidenceMarkdown(row), nil
 }

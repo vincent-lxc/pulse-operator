@@ -41,7 +41,9 @@ func main() {
 	server.AddIService(&operatorsvc.Service{}, &servertypes.ServerOption{
 		Demo: &servertypes.DemoOption{File: admintitle.FS()},
 	})
-	applyListenHost(listenHost())
+	host := listenHost()
+	applyListenHost(host)
+	installViewBind(server, host)
 	server.Start()
 }
 

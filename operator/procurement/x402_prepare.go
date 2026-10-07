@@ -132,13 +132,12 @@ func authCaptureParts(payer common.Address, item Accept, now time.Time) (map[str
 	return auth, extra, nil
 }
 
-// FinishPayment 用外部签名拼出 PAYMENT-SIGNATURE。
-func FinishPayment(item Accept, payer common.Address, auth map[string]any, sigHex string, extra map[string]any) Payment {
-	payment, err := packPayment(item, payer, map[string]any{
+// FinishPayment 用外部签名拼出 PAYMENT-SIGNATURE。恢复出的地址必须等于付款人。
+func FinishPayment(item Accept, payer common.Address, auth map[string]any, sigHex string, extra map[string]any) (Payment, error) {
+	if err := VerifyTypedSignature(item, payer, auth, sigHex); err != nil {
+		return Payment{}, err
+	}
+	return packPayment(item, payer, map[string]any{
 		"signature": sigHex, "authorization": auth,
 	}, extra)
-	if err != nil {
-		return Payment{}
-	}
-	return payment
 }

@@ -54,12 +54,16 @@ type billDeps struct {
 	buffer   *big.Int
 	save     func(*models.Bill) error
 	audit    *treasury.AuditLog
+	runSpent *big.Int
 }
 
 // AdvanceBill 把账单从报价推进到完成。已经完成的账单不会再次付款。
 func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 	if bill == nil {
 		return fmt.Errorf("bill is missing")
+	}
+	if bill.Years != 1 {
+		bill.Years = 1
 	}
 	if terminal(bill.State) || (bill.State == "escalated" && bill.VaultTx != "") {
 		return nil
@@ -118,11 +122,17 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 		if !d.Submit || (d.Action != treasury.ActionPay && d.Action != treasury.ActionEscalate) {
 			return stop(bill, deps, d.Action, false, d.ReasonCode, d.Reason)
 		}
+		if d.Action == treasury.ActionPay && deps.runSpent != nil {
+			deps.runSpent.Add(deps.runSpent, amount)
+		}
 		bill.State = "decided"
-		if err := deps.save(bill); err != nil {
+		if err := recordBillDecision(bill, amount.String()); err != nil {
 			return err
 		}
-		if err := writeBillAudit(deps.audit, bill, "decision"); err != nil {
+		if err := auditDecision(deps, bill, d.Disagree); err != nil {
+			return err
+		}
+		if err := deps.save(bill); err != nil {
 			return err
 		}
 		if d.Action == treasury.ActionEscalate {
@@ -221,7 +231,7 @@ func AdvanceBill(ctx context.Context, bill *models.Bill, deps billDeps) error {
 	bill.State = "done"
 	bill.PaidAt = time.Now().UTC().Format(time.RFC3339)
 	bill.PorkbunURL = "https://porkbun.com/account/domains"
-	bill.Evidence = evidence(bill)
+	bill.Evidence = evidence(bill, deps.policy.ChainID)
 	if err := deps.save(bill); err != nil {
 		return err
 	}
@@ -258,7 +268,12 @@ func stop(bill *models.Bill, deps billDeps, action string, _ bool, code, reason 
 	default:
 		bill.State = "escalated"
 	}
-	bill.Evidence = evidence(bill)
+	if err := recordBillDecision(bill, bill.AmountUnits); err != nil {
+		return err
+	}
+	if err := auditDecision(deps, bill, strings.Contains(bill.RiskNotes, "llm_disagreed")); err != nil {
+		return err
+	}
 	if err := deps.save(bill); err != nil {
 		return err
 	}
@@ -277,12 +292,6 @@ func copyPlan(bill *models.Bill, d treasury.Decision) {
 	bill.Confidence = d.Confidence
 	bill.PlannerRaw = d.PlannerRaw
 	bill.LatencyMS = d.LatencyMS
-	if d.SoftNote != "" {
-		bill.RiskNotes = joinNote(bill.RiskNotes, d.SoftNote)
-	}
-	if d.Disagree {
-		bill.RiskNotes = joinNote(bill.RiskNotes, "llm_disagreed")
-	}
 }
 
 func hashLocked(bill *models.Bill) bool {
@@ -314,7 +323,10 @@ func billInput(bill *models.Bill, facts procurement.Facts, hard procurement.Hard
 			"quote_cents": facts.QuoteCents, "category": bill.CategoryCode,
 		},
 		Vault: map[string]any{
+			"balance":   treasury.FormatUSDC(facts.Balance),
 			"remaining": treasury.FormatUSDC(facts.Remaining), "per_tx_cap": treasury.FormatUSDC(facts.PerTxCap),
+			"max_bill": treasury.FormatUSDC(facts.MaxBill), "max_spend_per_run": treasury.FormatUSDC(facts.MaxSpend),
+			"run_spent":           treasury.FormatUSDC(facts.RunSpent),
 			"monthly_spent_cents": facts.MonthlySpent, "monthly_limit_cents": facts.MonthlyLimit,
 			"daily_count": facts.DailyCount, "daily_cap": facts.DailyCap,
 		},
@@ -357,18 +369,68 @@ func explorerBase(chainID, tx string) string {
 	return "https://sepolia.basescan.org/tx/" + tx
 }
 
-func evidence(bill *models.Bill) string {
+func evidence(bill *models.Bill, chainID string) string {
 	raw, _ := json.MarshalIndent(map[string]any{
 		"bill_id": bill.Code, "vendor": bill.Vendor, "domain": bill.Domain, "kind": bill.Kind,
 		"quote_cents": bill.QuoteCents, "decision_hash": bill.DecisionHash, "action": bill.Action,
 		"rationale": bill.Rationale, "model_id": bill.ModelID, "prompt_hash": bill.PromptHash,
-		"risk_notes": bill.RiskNotes, "confidence": bill.Confidence, "vault_tx": bill.VaultTx,
-		"vault_chain": 5042, "cctp_burn_tx": bill.CCTPBurnTx, "cctp_message": bill.CCTPMessageHash,
+		"risk_notes": bill.RiskNotes, "confidence": bill.Confidence, "latency_ms": bill.LatencyMS,
+		"vault_tx": bill.VaultTx, "vault_chain": chainID,
+		"cctp_burn_tx": bill.CCTPBurnTx, "cctp_message": bill.CCTPMessageHash,
 		"base_mint_tx": bill.BaseMintTx, "forward_fee": bill.ForwardFeeUnits, "x402_scheme": bill.X402Scheme,
 		"x402_payer": bill.X402Payer, "porkbun_order_id": bill.PorkbunOrderID, "mode": bill.Mode,
 		"state": bill.State,
 	}, "", "  ")
 	return string(raw)
+}
+
+func auditDecision(deps billDeps, bill *models.Bill, disagree bool) error {
+	bill.Evidence = evidence(bill, deps.policy.ChainID)
+	if bill.DecisionHash == "" {
+		return nil
+	}
+	if err := writeBillAudit(deps.audit, bill, "decision"); err != nil {
+		return err
+	}
+	if deps.audit == nil || !disagree {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"hard_note": bill.RiskNotes, "planner_action": bill.PlannerAction, "rationale": bill.Rationale,
+		"model_id": bill.ModelID, "latency_ms": bill.LatencyMS, "action": bill.Action,
+	})
+	if err != nil {
+		return err
+	}
+	return deps.audit.Append(treasury.AuditEvent{
+		RunID: bill.Code, Kind: "planner_disagree", DecisionHash: bill.DecisionHash,
+		Outcome: bill.Action, Payload: payload,
+	})
+}
+
+func recordBillDecision(bill *models.Bill, amount string) error {
+	if bill == nil || bill.DecisionHash == "" {
+		return nil
+	}
+	row := models.NewDecisionRecord()
+	row.Code = bill.DecisionHash
+	row.RunID = bill.Code
+	row.PayableCode = bill.Code
+	row.Action = bill.Action
+	row.ReasonCode = bill.ReasonCode
+	row.Reason = bill.Reason
+	row.CategoryCode = bill.CategoryCode
+	row.AmountUnits = amount
+	row.Outcome = bill.State
+	row.Rationale = bill.Rationale
+	row.ModelID = bill.ModelID
+	row.PlannerAction = bill.PlannerAction
+	row.PromptHash = bill.PromptHash
+	row.RiskNotes = bill.RiskNotes
+	row.Confidence = bill.Confidence
+	row.PlannerRaw = bill.PlannerRaw
+	row.LatencyMS = bill.LatencyMS
+	return models.InsertDecision(row)
 }
 
 func writeBillAudit(log *treasury.AuditLog, bill *models.Bill, kind string) error {
@@ -396,10 +458,11 @@ func EvidenceMarkdown(bill *models.Bill) string {
 - decision: %s
 - model: %s
 - rationale: %s
+- latency_ms: %d
 - vault: %s
 - burn: %s
 - base mint: %s
 - porkbun order: %s
 - mode: %s
-`, bill.Domain, bill.Code, bill.State, bill.DecisionHash, bill.ModelID, bill.Rationale, bill.VaultTx, bill.CCTPBurnTx, bill.BaseMintTx, bill.PorkbunOrderID, bill.Mode)
+`, bill.Domain, bill.Code, bill.State, bill.DecisionHash, bill.ModelID, bill.Rationale, bill.LatencyMS, bill.VaultTx, bill.CCTPBurnTx, bill.BaseMintTx, bill.PorkbunOrderID, bill.Mode)
 }

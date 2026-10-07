@@ -216,6 +216,15 @@ func generousDeps(t *testing.T) billDeps {
 				Remaining: big.NewInt(50_000_000), PerTxCap: big.NewInt(20_000_000), Amount: amount,
 			}
 		},
+		vault: func(_ context.Context, bill *models.Bill, _ *big.Int, _ string) (vaultResult, error) {
+			return vaultResult{TxHash: "dry-vault-" + bill.Code, Status: "paid"}, nil
+		},
+		burn: func(_ context.Context, bill *models.Bill, _ *big.Int, _ *big.Int) (burnResult, error) {
+			return burnResult{BurnTx: "dry-burn-" + bill.Code, MintTx: "dry-mint-" + bill.Code}, nil
+		},
+		merchant: func(_ context.Context, bill *models.Bill) (merchantResult, error) {
+			return merchantResult{OrderID: "dry-" + bill.Code}, nil
+		},
 		cfg:    treasury.Config{Mode: "dry-run", Planner: treasury.PlannerConfig{Driver: "rules"}},
 		policy: treasury.Policy{AgentID: "pulse-operator", ChainID: "5042002", Vault: "0x1111111111111111111111111111111111111111"},
 		payee:  "0x2222222222222222222222222222222222222222",

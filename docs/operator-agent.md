@@ -70,7 +70,7 @@ No chain write happens. `chainDriver: mock` is the offline snapshot. A later moc
 
 USDC `Transfer` logs are read in chunks of `logChunk` (default 9000). The first scan is the last `logLookback` blocks unless `fullLogScan: true`. `data/log-cursor.json` stores the last scanned block. Public `https://rpc.testnet.arc.io` often returns HTTP 429; RPC calls retry with backoff. Fallback endpoint: `https://rpc.blockdaemon.testnet.arc.io`. On-chain inflows are tagged `local:rpc`.
 
-The API and gRPC processes bind to `listen` (default `127.0.0.1`). `OPERATOR_BIND` overrides it. Loopback binds also set the framework local-visit check. Core's admin view (`-view`) still listens on `:<port>` on every interface; that address is hardcoded in the framework.
+The API, gRPC, and admin view (`-view`) bind to `listen` (default `127.0.0.1`). `OPERATOR_BIND` overrides it. Loopback binds also set the framework local-visit check. The framework's HTML server would listen on every interface; the process disables that listener and serves the same routes on `listen` instead.
 
 ## Admin view and HTTP
 
@@ -229,5 +229,5 @@ Run the two Go modules separately. There is no root `go.work`: the payment CLI a
 - Creating the Circle webhook subscription. The receiver and the signature check are in this process. Registering the public HTTPS endpoint is a Console / `POST /v2/notifications/subscriptions/permissionless` step.
 - Agent-wallet spending-limit changes. Reading the supported chain is in code. Setting a limit needs a human email OTP, and Circle rejects the call on testnet.
 - CCTP discovery without a burn transaction hash. Iris looks up one source transaction. It does not stream every mint to the vault. The USDC `Transfer` log still catches the mint after it lands.
-- The admin view listen address. API and gRPC honor `listen` / `OPERATOR_BIND`. The framework's HTML server always uses `:<view port>`.
+- The admin view listen address follows `listen` / `OPERATOR_BIND` (default `127.0.0.1`).
 - The admin sidebar title. The document title is Pulse Operator. The sidebar stays 金库 / Treasury.

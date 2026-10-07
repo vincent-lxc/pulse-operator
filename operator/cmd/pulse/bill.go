@@ -42,7 +42,7 @@ func billAdd(args []string) error {
 	fs := flag.NewFlagSet("bill add", flag.ContinueOnError)
 	domain := fs.String("domain", "", "domain name")
 	kind := fs.String("kind", "domain_register", "domain_register or domain_renew")
-	years := fs.Int("years", 1, "registration years")
+	years := fs.Int("years", 1, "must be 1; Porkbun charges the minimum term")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

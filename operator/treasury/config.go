@@ -79,12 +79,14 @@ type PorkbunConfig struct {
 
 // ProcurementConfig 是代理采购钱包。Arc 与 Base 地址不一致时必须显式写出 Base 地址。
 type ProcurementConfig struct {
-	Address      string `yaml:"address"`
-	BaseAddress  string `yaml:"baseAddress"`
-	WalletIDEnv  string `yaml:"walletIDEnv"`
-	WalletIDFile string `yaml:"walletIDFile"`
-	KeyEnv       string `yaml:"keyEnv"`
-	KeyFile      string `yaml:"keyFile"`
+	Address          string `yaml:"address"`
+	BaseAddress      string `yaml:"baseAddress"`
+	WalletIDEnv      string `yaml:"walletIDEnv"`
+	WalletIDFile     string `yaml:"walletIDFile"`
+	BaseWalletIDEnv  string `yaml:"baseWalletIDEnv"`
+	BaseWalletIDFile string `yaml:"baseWalletIDFile"`
+	KeyEnv           string `yaml:"keyEnv"`
+	KeyFile          string `yaml:"keyFile"`
 }
 
 // BaseChainConfig 是 CCTP 的目标链。
@@ -301,6 +303,9 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Procurement.WalletIDEnv == "" {
 		cfg.Procurement.WalletIDEnv = "CIRCLE_PROCUREMENT_WALLET_ID"
 	}
+	if cfg.Procurement.BaseWalletIDEnv == "" {
+		cfg.Procurement.BaseWalletIDEnv = "CIRCLE_PROCUREMENT_BASE_WALLET_ID"
+	}
 	if cfg.Procurement.KeyEnv == "" {
 		cfg.Procurement.KeyEnv = "PROCUREMENT_PRIVATE_KEY"
 	}
@@ -455,6 +460,14 @@ func BlockchainForChain(chainID string) string {
 		return "ARC"
 	}
 	return "ARC-TESTNET"
+}
+
+// BlockchainForBase 是 x402 签名要用的 Base 链名。不要拿 Arc 钱包去签。
+func BlockchainForBase(chainID, mode string) string {
+	if chainID == "8453" || mode == "mainnet" {
+		return "BASE"
+	}
+	return "BASE-SEPOLIA"
 }
 
 // ForwardCCTP 在没有打开标准转账回退时使用 Forwarding Service。

@@ -76,10 +76,8 @@ func (p *Porkbun) Renew(ctx context.Context, domain string, costCents int64, yea
 }
 
 func (p *Porkbun) payBody(costCents int64, years int, dryRun bool, checkoutID string) map[string]any {
-	if years <= 0 {
-		years = 1
-	}
-	body := map[string]any{"years": years}
+	_ = years
+	body := map[string]any{"years": 1}
 	if dryRun {
 		body["dryRun"] = true
 		body["cost"] = 0

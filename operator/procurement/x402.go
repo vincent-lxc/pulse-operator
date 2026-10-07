@@ -152,9 +152,74 @@ func SignPayment(key *ecdsa.PrivateKey, item Accept, now time.Time) (Payment, er
 	if err != nil {
 		return Payment{}, err
 	}
+	sigHex := "0x" + common.Bytes2Hex(sig)
+	if err := VerifyTypedSignature(item, payer, auth, sigHex); err != nil {
+		return Payment{}, err
+	}
 	return packPayment(item, payer, map[string]any{
-		"signature": "0x" + common.Bytes2Hex(sig), "authorization": auth,
+		"signature": sigHex, "authorization": auth,
 	}, extra)
+}
+
+// VerifyTypedSignature 用 ecrecover 核对签名者就是 payer。
+func VerifyTypedSignature(item Accept, payer common.Address, auth map[string]any, sigHex string) error {
+	primary := "TransferWithAuthorization"
+	if strings.EqualFold(item.Scheme, "auth-capture") {
+		primary = "ReceiveWithAuthorization"
+	}
+	name, version, err := tokenDomain(item)
+	if err != nil {
+		return err
+	}
+	chainID, err := chainFromNetwork(item.Network)
+	if err != nil {
+		return err
+	}
+	td := apitypes.TypedData{
+		Types: apitypes.Types{
+			"EIP712Domain": {
+				{Name: "name", Type: "string"},
+				{Name: "version", Type: "string"},
+				{Name: "chainId", Type: "uint256"},
+				{Name: "verifyingContract", Type: "address"},
+			},
+			primary: {
+				{Name: "from", Type: "address"},
+				{Name: "to", Type: "address"},
+				{Name: "value", Type: "uint256"},
+				{Name: "validAfter", Type: "uint256"},
+				{Name: "validBefore", Type: "uint256"},
+				{Name: "nonce", Type: "bytes32"},
+			},
+		},
+		PrimaryType: primary,
+		Domain: apitypes.TypedDataDomain{
+			Name: name, Version: version, ChainId: math.NewHexOrDecimal256(chainID),
+			VerifyingContract: common.HexToAddress(item.Asset).Hex(),
+		},
+		Message: auth,
+	}
+	hash, _, err := apitypes.TypedDataAndHash(td)
+	if err != nil {
+		return err
+	}
+	sig := common.FromHex(strings.TrimSpace(sigHex))
+	if len(sig) != 65 {
+		return fmt.Errorf("signature length %d", len(sig))
+	}
+	sig = append([]byte(nil), sig...)
+	if sig[64] >= 27 {
+		sig[64] -= 27
+	}
+	pub, err := crypto.SigToPub(hash, sig)
+	if err != nil {
+		return fmt.Errorf("recover signer: %w", err)
+	}
+	got := crypto.PubkeyToAddress(*pub)
+	if got != payer {
+		return fmt.Errorf("recovered signer %s is not payer %s", got.Hex(), payer.Hex())
+	}
+	return nil
 }
 
 func packPayment(item Accept, payer common.Address, payload map[string]any, extra map[string]any) (Payment, error) {

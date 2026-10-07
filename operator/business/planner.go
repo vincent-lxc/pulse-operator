@@ -108,6 +108,9 @@ func rulesOutput(action, reason string) treasury.PlanOutput {
 }
 
 func applyPlanner(ctx context.Context, cfg treasury.Config, plan treasury.PlanFunc, d treasury.Decision, in planner.PublicInput) treasury.Decision {
+	if in.Kind == "bill" {
+		return applyBillPlan(ctx, cfg, plan, d, in)
+	}
 	if plan == nil && cfg.Planner.Driver != "gateway" {
 		return treasury.ApplyPlan(d, rulesOutput(d.Action, d.Reason), nil)
 	}
@@ -119,6 +122,28 @@ func applyPlanner(ctx context.Context, cfg treasury.Config, plan treasury.PlanFu
 		out, err = plan(ctx, treasury.PlanRequest{Decision: d})
 	} else {
 		out, err = decide(ctx, cfg, in)
+	}
+	if err != nil && out.PromptHash == "" {
+		if _, hash, hashErr := planner.Prompt(in); hashErr == nil {
+			out.PromptHash = hash
+		}
+	}
+	return treasury.ApplyPlan(d, out, err)
+}
+
+// applyBillPlan 用账单自己的公开输入。金库循环的 planFunc 只看 Snapshot，账单调用时那份快照是空的。
+func applyBillPlan(ctx context.Context, cfg treasury.Config, plan treasury.PlanFunc, d treasury.Decision, in planner.PublicInput) treasury.Decision {
+	var (
+		out treasury.PlanOutput
+		err error
+	)
+	switch {
+	case cfg.Planner.Driver == "gateway":
+		out, err = decide(ctx, cfg, in)
+	case plan != nil:
+		out, err = plan(ctx, treasury.PlanRequest{Decision: d})
+	default:
+		out = rulesOutput(d.Action, d.Reason)
 	}
 	if err != nil && out.PromptHash == "" {
 		if _, hash, hashErr := planner.Prompt(in); hashErr == nil {

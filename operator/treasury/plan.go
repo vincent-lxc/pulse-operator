@@ -46,14 +46,24 @@ func ApplyPlan(d Decision, out PlanOutput, callErr error) Decision {
 			d.ReasonCode = "planner_fail_closed"
 			d.Reason = "planner failed closed; payment was not submitted"
 		}
-		return d
+		return sealNotes(d)
 	}
 	d.PlannerAction = out.Action
 	d.Rationale = out.Rationale
 	if !containsAction(AllowedActions(hard), out.Action) {
 		d.Disagree = true
 		d.SoftNote = joinNote(d.SoftNote, "llm_disagreed:"+out.Action)
-		return d
+		return sealNotes(d)
+	}
+	// 规则没拒绝时，模型的 reject 不能把账单关死。改成不提交的 escalate，人可以再看。
+	if out.Action == ActionReject && hard != ActionReject {
+		d.Disagree = true
+		d.Action = ActionEscalate
+		d.Submit = false
+		d.ReasonCode = "planner_reject"
+		d.Reason = "model rejected a bill the rules did not reject"
+		d.SoftNote = joinNote(d.SoftNote, "llm_chose:reject")
+		return sealNotes(d)
 	}
 	if out.Action != hard {
 		d.Disagree = true
@@ -67,6 +77,17 @@ func ApplyPlan(d Decision, out PlanOutput, callErr error) Decision {
 		d.Submit = hard == ActionEscalate && hardSubmit
 	default:
 		d.Submit = false
+	}
+	return sealNotes(d)
+}
+
+// sealNotes 在算 decisionHash 之前把分歧写进 RiskNotes。哈希之后不能再追加。
+func sealNotes(d Decision) Decision {
+	if d.SoftNote != "" {
+		d.RiskNotes = joinNote(d.RiskNotes, d.SoftNote)
+	}
+	if d.Disagree && !strings.Contains(d.RiskNotes, "llm_disagreed") {
+		d.RiskNotes = joinNote(d.RiskNotes, "llm_disagreed")
 	}
 	return d
 }

@@ -30,7 +30,9 @@ planner:
 porkbun:
   apiBase: https://api.porkbun.com/api/json/v3
   apiKeyEnv: PORKBUN_API_KEY
+  apiKeyFile: ""
   secretEnv: PORKBUN_SECRET_API_KEY
+  secretFile: ""
   monthlyLimitCents: 10000
   dailyCap: 10
   priceToleranceCents: 0
@@ -38,6 +40,7 @@ porkbun:
 procurement:
   address: "0x0000000000000000000000000000000000000000"
   walletIDEnv: CIRCLE_PROCUREMENT_WALLET_ID
+  baseWalletIDEnv: CIRCLE_PROCUREMENT_BASE_WALLET_ID
   keyEnv: PROCUREMENT_PRIVATE_KEY
 base:
   chainID: "8453"

@@ -2,6 +2,7 @@ package procurement
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"math/big"
 	"strings"
 	"testing"
@@ -133,6 +134,52 @@ func TestAuthCaptureGoldenSigns(t *testing.T) {
 	}
 	if common.HexToAddress(payment.PayTo) != common.HexToAddress("0x3333333333333333333333333333333333333333") {
 		t.Fatalf("payTo %s", payment.PayTo)
+	}
+}
+
+func TestFinishPaymentRejectsADifferentSigner(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := ParsePaymentRequired(goldenRequired())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := Select(req, PayPolicy{
+		Networks: []string{"eip155:84532"}, Asset: BaseSepoliaUSDC, Amount: big.NewInt(2_040_000),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	payer := crypto.PubkeyToAddress(key.PublicKey)
+	_, auth, extra, err := PrepareTypedData(payer, item, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := SignPayment(other, item, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(signed.Header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Payload struct {
+			Signature string `json:"signature"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FinishPayment(item, payer, auth, body.Payload.Signature, extra); err == nil {
+		t.Fatal("recovered signer was not the payer")
 	}
 }
 

@@ -20,6 +20,10 @@ type Facts struct {
 	DailyCount      int
 	DailyCap        int
 	Requoted        bool
+	Balance         *big.Int
+	MaxBill         *big.Int
+	MaxSpend        *big.Int
+	RunSpent        *big.Int
 }
 
 // Hard 是代码给出的动作。Submit 为真时才会调用 PolicyVault.pay。
@@ -51,6 +55,15 @@ func DecideHard(f Facts) Hard {
 		return Hard{Action: "escalate_to_human", ReasonCode: "monthly_limit", Reason: "quote would pass the Porkbun monthly limit"}
 	}
 	amount := unitsOf(f.Amount)
+	if f.MaxBill != nil && f.MaxBill.Sign() > 0 && amount.Cmp(f.MaxBill) > 0 {
+		return Hard{Action: "escalate_to_human", ReasonCode: "max_bill", Reason: "amount is above maxBillUSDC"}
+	}
+	if f.MaxSpend != nil && f.MaxSpend.Sign() > 0 {
+		next := new(big.Int).Add(unitsOf(f.RunSpent), amount)
+		if next.Cmp(f.MaxSpend) > 0 {
+			return Hard{Action: "escalate_to_human", ReasonCode: "max_spend_per_run", Reason: "amount would pass maxSpendPerRunUSDC"}
+		}
+	}
 	if f.PerTxCap != nil && f.PerTxCap.Sign() > 0 && amount.Cmp(f.PerTxCap) > 0 {
 		return Hard{Action: "escalate_to_human", Submit: true, ReasonCode: "over_tx_cap", Reason: "amount is above the category per-transaction cap"}
 	}
