@@ -4,6 +4,7 @@ package business
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
 )
@@ -39,6 +40,12 @@ func WriteReport(out io.Writer, report treasury.Report) error {
 		if d.CircleState != "" {
 			line += " circle_state=" + d.CircleState
 		}
+		if d.ModelID != "" {
+			line += " model=" + d.ModelID
+		}
+		if d.Rationale != "" {
+			line += " rationale=" + oneLine(d.Rationale)
+		}
 		if _, err := fmt.Fprintf(out, "%s\n", line); err != nil {
 			return err
 		}
@@ -49,4 +56,12 @@ func WriteReport(out io.Writer, report treasury.Report) error {
 		}
 	}
 	return nil
+}
+
+func oneLine(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > 160 {
+		return s[:160]
+	}
+	return s
 }

@@ -9,7 +9,9 @@ import (
 
 	"github.com/digitalwayhk/core/pkg/server/router"
 	"github.com/digitalwayhk/core/pkg/server/run"
+	servertypes "github.com/digitalwayhk/core/pkg/server/types"
 	operatorsvc "github.com/vincent-lxc/pulse-operator/operator"
+	"github.com/vincent-lxc/pulse-operator/operator/admintitle"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
@@ -24,12 +26,21 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "bill" {
+		if err := runBill(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "operator:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := models.EnsureStorage(); err != nil {
 		fmt.Fprintln(os.Stderr, "operator:", err)
 		os.Exit(1)
 	}
 	server := run.NewWebServer()
-	server.AddIService(&operatorsvc.Service{})
+	server.AddIService(&operatorsvc.Service{}, &servertypes.ServerOption{
+		Demo: &servertypes.DemoOption{File: admintitle.FS()},
+	})
 	applyListenHost(listenHost())
 	server.Start()
 }

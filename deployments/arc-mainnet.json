@@ -1,0 +1,31 @@
+{
+  "network": "arc-mainnet",
+  "chainId": 5042,
+  "rpc": "https://rpc.mainnet.arc.io",
+  "explorer": "https://explorer.arc.io",
+  "status": "template-not-deployed",
+  "warning": "Do not reuse 0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01. That address is PolicyVault on Arc testnet and PulseReceipt on Arc mainnet. Deploy a new PolicyVault and fill PolicyVault.address after the owner runs Deploy.s.sol with CONFIRM_MAINNET=1 and EXPECTED_CHAIN_ID=5042.",
+  "contracts": {
+    "PolicyVault": {
+      "address": "",
+      "sourcePath": "contracts/src/PolicyVault.sol",
+      "setup": "contracts/script/SetupDomains.s.sol"
+    },
+    "USDC": "0x3600000000000000000000000000000000000000",
+    "TokenMessengerV2": "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+    "MessageTransmitterV2": "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64"
+  },
+  "base": {
+    "chainId": 8453,
+    "usdc": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "tokenMessengerV2": "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+    "messageTransmitterV2": "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64",
+    "explorer": "https://basescan.org"
+  },
+  "cctp": {
+    "arcDomain": 26,
+    "baseDomain": 6,
+    "forwardHook": "0x636374702d666f72776172640000000000000000000000000000000000000000",
+    "iris": "https://iris-api.circle.com"
+  }
+}

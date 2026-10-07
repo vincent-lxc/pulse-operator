@@ -93,7 +93,7 @@ go build -o bin/pulse ./cmd/pulse
 
 In the admin UI open menu management, run **更新菜单**, then open Decisions, Payables, Approvals, Revenue, Categories, Cycles. Manage routes are view and search only, except Approvals, which also has Approve and Reject. The local view signs a TestToken for `platform-admin` by itself.
 
-Decisions and Approvals include `circle_tx_id` and `circle_state` when Circle submitted the transaction. The browser document title stays **BitZoom Exchange Admin**. Core embeds that string in the admin frontend and `IService` has no title setting, so this service cannot rename it. The sidebar name is still 金库 / Treasury.
+Decisions and Approvals include `circle_tx_id` and `circle_state` when Circle submitted the transaction. The Decisions view also shows `rationale`, `model_id`, and `prompt_hash` from the planner. The browser document title is **Pulse Operator**: the process serves a rewritten copy of the embedded admin frontend. The sidebar name is still 金库 / Treasury.
 
 ```bash
 curl -s http://127.0.0.1:18092/api/operator/dashboard
@@ -225,9 +225,9 @@ Run the two Go modules separately. There is no root `go.work`: the payment CLI a
 
 ## What is stubbed
 
-- LLM call. The hook exists; the default advisor is a no-op; a configured URL still cannot flip the action.
+- The legacy `llm` advisor hook. It is still a no-op and cannot flip an action. Bill and payable planning goes through `planner.driver` instead (`rules` or `gateway`).
 - Creating the Circle webhook subscription. The receiver and the signature check are in this process. Registering the public HTTPS endpoint is a Console / `POST /v2/notifications/subscriptions/permissionless` step.
 - Agent-wallet spending-limit changes. Reading the supported chain is in code. Setting a limit needs a human email OTP, and Circle rejects the call on testnet.
 - CCTP discovery without a burn transaction hash. Iris looks up one source transaction. It does not stream every mint to the vault. The USDC `Transfer` log still catches the mint after it lands.
 - The admin view listen address. API and gRPC honor `listen` / `OPERATOR_BIND`. The framework's HTML server always uses `:<view port>`.
-- The admin document title. The embedded frontend is **BitZoom Exchange Admin**. There is no config key for it.
+- The admin sidebar title. The document title is Pulse Operator. The sidebar stays 金库 / Treasury.

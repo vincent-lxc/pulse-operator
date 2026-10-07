@@ -15,6 +15,8 @@ const (
 	ActionSweep = "sweep_to_reserve"
 	// ActionEscalate 表示交给人审批，超限时仍会提交 PolicyVault.pay。
 	ActionEscalate = "escalate_to_human"
+	// ActionReject 表示明确不付，并把应付标成 closed。
+	ActionReject = "reject"
 
 	// ReasonWithinPolicy 表示金额、预算、名单和储备都允许支付。
 	ReasonWithinPolicy = "within_policy"
@@ -112,23 +114,33 @@ type Policy struct {
 
 // Decision 是一条机器可读的处置结果。
 type Decision struct {
-	PayableID    string
-	Action       string
-	ReasonCode   string
-	Reason       string
-	Category     string
-	Payee        string
-	Amount       *big.Int
-	DecisionHash string
-	Submit       bool
-	Outcome      string
-	TxHash       string
-	RequestID    string
-	SoftNote     string
-	Calldata     string
-	Product      string
-	CircleTxID   string `json:"circle_tx_id,omitempty"`
-	CircleState  string `json:"circle_state,omitempty"`
+	PayableID     string
+	Action        string
+	ReasonCode    string
+	Reason        string
+	Category      string
+	Payee         string
+	Amount        *big.Int
+	DecisionHash  string
+	Submit        bool
+	Outcome       string
+	TxHash        string
+	RequestID     string
+	SoftNote      string
+	Calldata      string
+	Product       string
+	CircleTxID    string `json:"circle_tx_id,omitempty"`
+	CircleState   string `json:"circle_state,omitempty"`
+	Planner       string `json:"planner,omitempty"`
+	ModelID       string `json:"model_id,omitempty"`
+	PlannerAction string `json:"planner_action,omitempty"`
+	Rationale     string `json:"rationale,omitempty"`
+	PromptHash    string `json:"prompt_hash,omitempty"`
+	RiskNotes     string `json:"risk_notes,omitempty"`
+	Confidence    string `json:"confidence,omitempty"`
+	Disagree      bool   `json:"disagree,omitempty"`
+	LatencyMS     int64  `json:"latency_ms,omitempty"`
+	PlannerRaw    string `json:"planner_raw,omitempty"`
 }
 
 // Liquidity 是余额、即将到期义务和储备目标的对照。

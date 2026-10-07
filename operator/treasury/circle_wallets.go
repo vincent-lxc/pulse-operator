@@ -119,6 +119,50 @@ func (c *WalletsClient) Execute(ctx context.Context, call ContractExecution) (ci
 	}
 }
 
+// SignTypedData 调用 Circle 的 EIP-712 签名。明文 entity secret 不会放进请求。
+func (c *WalletsClient) SignTypedData(ctx context.Context, walletID, walletAddress, blockchain, typedJSON string) (string, error) {
+	if c == nil || c.APIKey == "" || len(c.EntitySecret) != 32 {
+		return "", fmt.Errorf("circle wallets credentials are missing")
+	}
+	if strings.TrimSpace(typedJSON) == "" {
+		return "", fmt.Errorf("typed data is empty")
+	}
+	pub, err := c.fetchPublicKey(ctx)
+	if err != nil {
+		return "", err
+	}
+	cipher, err := EncryptEntitySecret(pub, c.EntitySecret)
+	if err != nil {
+		return "", err
+	}
+	body := map[string]any{
+		"data":                   typedJSON,
+		"entitySecretCiphertext": cipher,
+	}
+	if walletID != "" {
+		body["walletId"] = walletID
+	} else {
+		body["walletAddress"] = walletAddress
+		body["blockchain"] = blockchain
+	}
+	raw, err := c.post(ctx, "/v1/w3s/developer/sign/typedData", body)
+	if err != nil {
+		return "", err
+	}
+	var parsed struct {
+		Data struct {
+			Signature string `json:"signature"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", err
+	}
+	if parsed.Data.Signature == "" {
+		return "", fmt.Errorf("circle typed data signature is empty")
+	}
+	return parsed.Data.Signature, nil
+}
+
 // applyCircleFee 写入手续费。feeLevel 与 maxFee/priorityFee/gasPrice 互斥。金额单位是 gwei。
 func applyCircleFee(body map[string]any, fee CircleFee) error {
 	if fee.Explicit {

@@ -143,8 +143,24 @@ synced from `pendingRequestIds()`. The dashboard `circle` field follows the
 current executor. Telegram sends when `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` are set. `loopEnabled` stays off unless `loopInterval` and
 `maxSpendPerRunUSDC` are set. If `rpc.testnet.arc.io` returns 429, use
-`https://rpc.blockdaemon.testnet.arc.io`. The admin document title stays the
-framework default.
+`https://rpc.blockdaemon.testnet.arc.io`. The admin document title is
+**Pulse Operator**. The sidebar stays 金库 / Treasury.
+
+## Real spend on Arc mainnet
+
+Domain bills (Porkbun register/renew, paid in USDC via x402 after a CCTP bridge from Arc to Base) are dry-run unless every mainnet gate passes. CI never spends. The step-by-step owner checklist is [docs/runbook-mainnet-porkbun.md](docs/runbook-mainnet-porkbun.md). A new mainnet vault address belongs in [deployments/arc-mainnet.json](deployments/arc-mainnet.json); do not reuse the testnet PolicyVault.
+
+```bash
+cd operator
+go run ./cmd/pulse bill add porkbun --domain pulseoperator.dev
+go run ./cmd/pulse bill run --config config/dry-run.yaml --id bill-pulseoperator-dev
+```
+
+**The model does not hold the money.** With `planner.driver: gateway` the Vercel AI Gateway model (`openai/gpt-5.4-nano` by default, key `AI_GATEWAY_API_KEY`) chooses `pay`, `defer`, `escalate`, or `reject`, plus a rationale. Go then drops any choice the deterministic rules do not already allow. It cannot raise a category cap, add a payee, or exceed a budget. Bad JSON, a timeout, or an HTTP error fail closed: a would-be payment is recorded as `escalate` and is not submitted. `planner.driver: rules` is the default and what CI runs; it does not call a model.
+
+**The contract is still the authority.** `PolicyVault.pay` enforces the budget, the per-transaction cap, the payee allowlist, pause, and a single-use `decisionHash`. That hash now includes the model id and the rationale, so the on-chain payment points at the reasoning that was actually used. An optional Jev review (`JEV_API_KEY`) can only narrow a pay to escalate; if Jev is down, the payment is not blocked for that reason.
+
+Over-cap bills are still submitted so the vault can open an approval. They do not transfer. Monthly, daily, and price-drift stops are local: nothing is sent.
 
 ## License
 
