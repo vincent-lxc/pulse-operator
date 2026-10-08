@@ -3,6 +3,7 @@ package business
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
@@ -611,10 +612,16 @@ func ExportBill(id string) (string, string, error) {
 	if row == nil {
 		return "", "", fmt.Errorf("bill not found")
 	}
-	if row.Evidence == "" {
-		row.Evidence = evidence(row, "")
+	chain := ""
+	if row.Evidence != "" {
+		var prev map[string]any
+		if json.Unmarshal([]byte(row.Evidence), &prev) == nil {
+			if v, ok := prev["vault_chain"].(string); ok {
+				chain = v
+			}
+		}
 	}
-	return row.Evidence, EvidenceMarkdown(row), nil
+	return evidence(row, chain), EvidenceMarkdown(row), nil
 }
 
 // ReturnFloatPlan 只描述把采购钱包剩余 USDC 转回金库。dry-run 不发送。

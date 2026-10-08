@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -151,7 +152,7 @@ func TestPorkbunErrorRedactsSecret(t *testing.T) {
 func TestPorkbunDryRunQuote(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), `"dryRun":true`) {
+		if !strings.Contains(string(body), `"dryRun":true`) || !strings.Contains(string(body), `"agreeToTerms":"yes"`) {
 			t.Fatalf("body %s", body)
 		}
 		_, _ = w.Write([]byte(`{"status":"SUCCESS","cost":875}`))
@@ -161,5 +162,58 @@ func TestPorkbunDryRunQuote(t *testing.T) {
 	order, err := client.Create(context.Background(), "pulse.dev", 0, 1, true, "", "", "")
 	if err != nil || order.CostCents != 875 {
 		t.Fatalf("%v %+v", err, order)
+	}
+}
+
+func TestAgreeToTermsOnQuoteAndPurchase(t *testing.T) {
+	cases := []struct {
+		name     string
+		renew    bool
+		dry      bool
+		checkout string
+		cost     int64
+	}{
+		{name: "create-quote", dry: true},
+		{name: "create-buy", cost: 204},
+		{name: "create-checkout", checkout: "chk-9", cost: 204},
+		{name: "renew-quote", renew: true, dry: true},
+		{name: "renew-buy", renew: true, cost: 204},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				got = string(raw)
+				_, _ = w.Write([]byte(`{"status":"SUCCESS","cost":204}`))
+			}))
+			defer srv.Close()
+			client := &Porkbun{BaseURL: srv.URL, APIKey: "pk1_test", Secret: "sk1_test", MinInterval: -1}
+			var err error
+			if tc.renew {
+				_, err = client.Renew(context.Background(), "pulse.dev", tc.cost, 1, tc.dry, tc.checkout, "bill-1", "")
+			} else {
+				_, err = client.Create(context.Background(), "pulse.dev", tc.cost, 1, tc.dry, tc.checkout, "bill-1", "")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(got, `"agreeToTerms":"yes"`) {
+				t.Fatalf("missing agreeToTerms: %s", got)
+			}
+			if tc.dry {
+				if !strings.Contains(got, `"dryRun":true`) || !strings.Contains(got, `"cost":0`) {
+					t.Fatalf("quote body %s", got)
+				}
+			} else if strings.Contains(got, `"dryRun"`) || !strings.Contains(got, fmt.Sprintf(`"cost":%d`, tc.cost)) {
+				t.Fatalf("purchase body %s", got)
+			}
+			if tc.checkout != "" && !strings.Contains(got, `"usdcCheckoutId":"`+tc.checkout+`"`) {
+				t.Fatalf("checkout body %s", got)
+			}
+			if tc.checkout == "" && !tc.dry && !strings.Contains(got, `"payWith":"usdc"`) {
+				t.Fatalf("payWith body %s", got)
+			}
+		})
 	}
 }

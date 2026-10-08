@@ -85,8 +85,7 @@ func billRun(args []string) error {
 		return err
 	}
 	for _, row := range rows {
-		fmt.Printf("bill %s state=%s action=%s hash=%s rationale=%s model=%s vault=%s order=%s\n",
-			row.Code, row.State, row.Action, row.DecisionHash, oneLine(row.Rationale), row.ModelID, row.VaultTx, row.PorkbunOrderID)
+		fmt.Println(business.BillRunLine(row))
 	}
 	return nil
 }

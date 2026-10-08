@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
 
@@ -515,7 +516,8 @@ func evidence(bill *models.Bill, chainID string) string {
 	raw, _ := json.MarshalIndent(map[string]any{
 		"bill_id": bill.Code, "vendor": bill.Vendor, "domain": bill.Domain, "kind": bill.Kind,
 		"quote_cents": bill.QuoteCents, "decision_hash": bill.DecisionHash, "planner": bill.Planner, "action": bill.Action,
-		"rationale": bill.Rationale, "model_id": bill.ModelID, "prompt_hash": bill.PromptHash,
+		"reason_code": publicText(bill.ReasonCode), "reason": publicText(bill.Reason),
+		"rationale": publicText(bill.Rationale), "model_id": bill.ModelID, "prompt_hash": bill.PromptHash,
 		"risk_notes": bill.RiskNotes, "confidence": bill.Confidence, "latency_ms": bill.LatencyMS,
 		"vault_tx": bill.VaultTx, "vault_chain": chainID,
 		"cctp_burn_tx": bill.CCTPBurnTx, "cctp_message": bill.CCTPMessageHash,
@@ -597,6 +599,8 @@ func EvidenceMarkdown(bill *models.Bill) string {
 	return fmt.Sprintf(`# %s %s
 
 - state: %s
+- reason_code: %s
+- reason: %s
 - decision: %s
 - planner: %s
 - model: %s
@@ -607,7 +611,28 @@ func EvidenceMarkdown(bill *models.Bill) string {
 - base mint: %s
 - porkbun order: %s
 - mode: %s
-`, bill.Domain, bill.Code, bill.State, bill.DecisionHash, bill.Planner, bill.ModelID, bill.Rationale, bill.LatencyMS, bill.VaultTx, bill.CCTPBurnTx, bill.BaseMintTx, bill.PorkbunOrderID, bill.Mode)
+`, bill.Domain, bill.Code, bill.State, publicText(bill.ReasonCode), publicText(bill.Reason), bill.DecisionHash, bill.Planner, bill.ModelID, publicText(bill.Rationale), bill.LatencyMS, bill.VaultTx, bill.CCTPBurnTx, bill.BaseMintTx, bill.PorkbunOrderID, bill.Mode)
+}
+
+var assignedSecret = regexp.MustCompile(`(?i)\b(api[_-]?key|secret(?:api)?key|private[_-]?key|entity[_-]?secret|authorization)\b\s*[:=]\s*("[^"]*"|'[^']*'|\S+)`)
+var vendorKey = regexp.MustCompile(`\b(?:pk1|sk1)_[A-Za-z0-9_-]+`)
+
+// publicText 把操作者能看的说明压成一行，并去掉私钥和 API key。
+func publicText(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	s = procurement.Redact(s)
+	s = assignedSecret.ReplaceAllString(s, "$1=[redacted]")
+	return vendorKey.ReplaceAllString(s, "[redacted]")
+}
+
+// BillRunLine 是 bill run 打印的一行。原因码和说明在这里，密钥不会出现。
+func BillRunLine(bill *models.Bill) string {
+	if bill == nil {
+		return ""
+	}
+	return fmt.Sprintf("bill %s state=%s action=%s reason_code=%s reason=%s hash=%s rationale=%s model=%s vault=%s order=%s",
+		bill.Code, bill.State, bill.Action, publicText(bill.ReasonCode), publicText(bill.Reason),
+		bill.DecisionHash, publicText(bill.Rationale), bill.ModelID, bill.VaultTx, bill.PorkbunOrderID)
 }
 
 func saveProgress(deps billDeps, bill *models.Bill) error {

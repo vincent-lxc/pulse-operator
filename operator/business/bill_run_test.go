@@ -63,6 +63,31 @@ func TestBillDryRunPaysOnceAndKeepsHash(t *testing.T) {
 	}
 }
 
+func TestBillOutputShowsReasonWithoutSecrets(t *testing.T) {
+	key := "0x" + strings.Repeat("ab", 32)
+	bill := &models.Bill{
+		Code: "bill-register-pulseoperator-top", Domain: "pulseoperator.top",
+		State: "escalated", Action: "escalate_to_human", ReasonCode: "quote_failed",
+		Reason:    "porkbun TERMS_NOT_AGREED: You must agree to the Domain Name Registration Agreement pk1_livekey " + key,
+		Rationale: "private_key=" + key,
+		ModelID:   "rules",
+		VaultTx:   "0x" + strings.Repeat("cd", 32),
+	}
+	outs := []string{BillRunLine(bill), EvidenceMarkdown(bill), evidence(bill, "5042")}
+	for _, out := range outs {
+		if strings.Contains(out, "pk1_livekey") || strings.Contains(out, key) || strings.Contains(out, strings.TrimPrefix(key, "0x")) {
+			t.Fatalf("secret leaked: %s", out)
+		}
+		if !strings.Contains(out, "quote_failed") || !strings.Contains(out, "TERMS_NOT_AGREED") || !strings.Contains(out, "You must agree") {
+			t.Fatalf("missing reason: %s", out)
+		}
+	}
+	line := BillRunLine(bill)
+	if !strings.Contains(line, "reason_code=quote_failed") || !strings.Contains(line, bill.VaultTx) {
+		t.Fatal(line)
+	}
+}
+
 func TestBillPlannerCannotRaiseAndFailClosedSkipsPay(t *testing.T) {
 	if err := models.EnsureStorage(); err != nil {
 		t.Fatal(err)
