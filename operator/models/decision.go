@@ -26,6 +26,14 @@ type DecisionRecord struct {
 	CircleProduct string `json:"circle" desc:"Circle 产品"`
 	CircleTxID    string `json:"circle_tx_id" desc:"Circle 交易号"`
 	CircleState   string `json:"circle_state" desc:"Circle 状态"`
+	Rationale     string `json:"rationale" desc:"模型理由"`
+	ModelID       string `json:"model_id" desc:"模型"`
+	PlannerAction string `json:"planner_action" desc:"模型动作"`
+	PromptHash    string `json:"prompt_hash" desc:"提示哈希"`
+	RiskNotes     string `json:"risk_notes" desc:"风险备注"`
+	Confidence    string `json:"confidence" desc:"置信度"`
+	PlannerRaw    string `json:"planner_raw" desc:"模型原文"`
+	LatencyMS     int64  `json:"latency_ms" desc:"模型耗时毫秒"`
 }
 
 // NewDecisionRecord 创建完整初始化的决策。
@@ -75,6 +83,22 @@ func ListDecisions() ([]*DecisionRecord, error) {
 // FindDecision 按 decisionHash 查找决策。
 func FindDecision(code string) (*DecisionRecord, error) {
 	return findDecision(code)
+}
+
+// UpdateDecisionOutcome 把已经落库的决策结果改成账单的最新状态。
+func UpdateDecisionOutcome(code, outcome, txHash string) error {
+	row, err := findDecision(code)
+	if err != nil || row == nil {
+		return err
+	}
+	if row.Outcome == outcome && (strings.TrimSpace(txHash) == "" || row.TxHash == txHash) {
+		return nil
+	}
+	row.Outcome = outcome
+	if strings.TrimSpace(txHash) != "" {
+		row.TxHash = txHash
+	}
+	return getDataAction().Update(row)
 }
 
 func findDecision(code string) (*DecisionRecord, error) {

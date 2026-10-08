@@ -6,6 +6,7 @@ import (
 
 	"github.com/digitalwayhk/core/pkg/server/router"
 	servertypes "github.com/digitalwayhk/core/pkg/server/types"
+	"github.com/vincent-lxc/pulse-operator/operator/access"
 	"github.com/vincent-lxc/pulse-operator/operator/api/dto"
 	"github.com/vincent-lxc/pulse-operator/operator/business"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
@@ -37,7 +38,10 @@ func (own *RecordRevenue) Validation(servertypes.IRequest) error {
 }
 
 // Do 写入收入模型，下一轮循环会计入未对账金额。
-func (own *RecordRevenue) Do(servertypes.IRequest) (interface{}, error) {
+func (own *RecordRevenue) Do(req servertypes.IRequest) (interface{}, error) {
+	if err := access.RequireLoopback(req); err != nil {
+		return nil, err
+	}
 	if err := business.RecordRevenue(own.Ref, own.From, own.AmountUSDC, own.Memo); err != nil {
 		return nil, err
 	}

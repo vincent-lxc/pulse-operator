@@ -76,3 +76,27 @@ loss, longer cooldown, allowlist intersection). See `internal/policy`.
 
 Re-sealing a record must yield the same keccak. `go test ./internal/audit`
 locks that in.
+
+## Operator treasury audit
+
+`operator/` writes a second JSONL file (`auditLog` in the operator config, default `data/audit.jsonl`). Rows are append-only. This is not the trading schema above.
+
+| Field | Notes |
+| --- | --- |
+| `run_id` | Cycle id, or the bill id for a domain payment |
+| `kind` | `liquidity`, `decision`, `execution`, `planner_disagree`, `bill`, `owner_override`, `approve_blocked` |
+| `decision_hash` | keccak of the canonical record below |
+| `tx_hash` | Present only on `execution` / after a send. Not part of the hash |
+| `payload` | The decision, including planner fields, or the bill evidence |
+
+Operator `decisionHash` version 2 covers, in struct order: `v`, `agent_id`, `chain_id`, `vault`, `payable_id`, `action`, `category`, `payee`, `amount_units`, `reason_code`, `planner`, `model_id`, `planner_action`, `rationale`, `prompt_hash`, `risk_notes`, `confidence`, `disagree`.
+
+The hash does **not** include latency, the raw model body, the chain transaction, Circle's transaction id, or the outcome. Those are stored on the decision row and in the JSONL payload (`latency_ms` is on the bill evidence and on a `planner_disagree` row). `risk_notes` inside the hash is the same string stored on the bill: disagreement text is appended before the hash, not after. `planner` inside the hash is the same string stored on the bill (`rules`, `gateway`, `error`, or `owner`); recompute it from that column. When a bill moves past `decided`, the decision row's `outcome` is updated to the bill state.
+
+The Decisions admin view shows `rationale` and `model_id` for treasury-loop decisions and for domain bills. Bills also have their own view, with Arc and Base explorer links when a real transaction hash exists.
+
+`planner_disagree` is an extra row when the model asked for an action the rules refused, or chose a narrower one, including a model `reject` of a bill the rules still allow. That reject is stored as `escalate` and does not close the bill. The submitted action is the one inside the hash.
+
+`owner_override` is written when `bill approve --override-cap` pays a bill that the rules stopped for `max_bill` or `max_spend_per_run`. The payload records `bill_id`, `reason_code`, and the `--override-reason` text. That same text is prefixed into the decision rationale before `decisionHash` is computed. Porkbun `monthly_limit` and `daily_cap` are not overridable, so they do not produce this row.
+
+`approve_blocked` is written when `bill approve` refuses a bill. The payload has the refusal `reason_code` and `reason`. The bill row's hashed columns (`reason_code`, `rationale`, `action`, `planner`, and the rest of canonical v2) stay as they were when `decisionHash` was computed. The refusal is not copied onto those columns.

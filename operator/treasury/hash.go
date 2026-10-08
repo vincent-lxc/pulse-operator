@@ -13,16 +13,24 @@ import (
 
 // Canonical 是上链 decisionHash 所覆盖的字段，不含交易哈希和执行结果。
 type Canonical struct {
-	V           int    `json:"v"`
-	AgentID     string `json:"agent_id"`
-	ChainID     string `json:"chain_id"`
-	Vault       string `json:"vault"`
-	PayableID   string `json:"payable_id"`
-	Action      string `json:"action"`
-	Category    string `json:"category"`
-	Payee       string `json:"payee"`
-	AmountUnits string `json:"amount_units"`
-	ReasonCode  string `json:"reason_code"`
+	V             int    `json:"v"`
+	AgentID       string `json:"agent_id"`
+	ChainID       string `json:"chain_id"`
+	Vault         string `json:"vault"`
+	PayableID     string `json:"payable_id"`
+	Action        string `json:"action"`
+	Category      string `json:"category"`
+	Payee         string `json:"payee"`
+	AmountUnits   string `json:"amount_units"`
+	ReasonCode    string `json:"reason_code"`
+	Planner       string `json:"planner"`
+	ModelID       string `json:"model_id"`
+	PlannerAction string `json:"planner_action"`
+	Rationale     string `json:"rationale"`
+	PromptHash    string `json:"prompt_hash"`
+	RiskNotes     string `json:"risk_notes"`
+	Confidence    string `json:"confidence"`
+	Disagree      bool   `json:"disagree"`
 }
 
 // CanonicalBytes 返回不含换行的确定性 JSON。

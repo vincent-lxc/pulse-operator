@@ -25,6 +25,31 @@ type LoopInput struct {
 	Manual        []Inflow
 	CircleProduct string
 	LimitNote     string
+	// Plan 是可选的 LLM 规划。为空时按硬规则原样记录，CI 走这条。
+	Plan PlanFunc
+}
+
+// PlanFunc 在硬规则之后给出模型意见。出错时循环按失败关闭处理。
+type PlanFunc func(ctx context.Context, req PlanRequest) (PlanOutput, error)
+
+// PlanRequest 是模型能看到的公开上下文，不含密钥。
+type PlanRequest struct {
+	Decision Decision
+	Snapshot Snapshot
+	Recent   []Decision
+}
+
+// PlanOutput 是结构化规划结果。
+type PlanOutput struct {
+	Action     string
+	Rationale  string
+	RiskNotes  string
+	Confidence string
+	ModelID    string
+	PromptHash string
+	Raw        string
+	LatencyMS  int64
+	Source     string
 }
 
 // Run 执行一轮。paid 和 closed 不再进入义务；仍在审批中的 escalated 会计入义务。
@@ -120,6 +145,7 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 		}
 		advice, adviseErr := in.Advisor.Advise(ctx, d)
 		d = Annotate(d, advice, adviseErr)
+		d = planDecision(ctx, in.Plan, d, snap, report.Decisions)
 		hash, err := seal(in.Policy, d)
 		if err != nil {
 			return Report{}, err
@@ -165,7 +191,7 @@ func Run(ctx context.Context, in LoopInput) (Report, error) {
 		if d.Action == ActionEscalate {
 			_ = in.Notifier.Notify(ctx, Notice{Kind: "escalation", Text: escalationText(in.Policy.ChainID, d)})
 		}
-		if d.Action != ActionPay && DueWithin(p, in.Policy.Now, in.Policy.Horizon) {
+		if d.Action != ActionPay && d.Action != ActionReject && DueWithin(p, in.Policy.Now, in.Policy.Horizon) {
 			stillDue.Add(stillDue, unitsOrZero(d.Amount))
 		}
 		if err := writeDecision(in.Audit, runID, d); err != nil {
@@ -275,17 +301,41 @@ func seal(policy Policy, d Decision) (string, error) {
 	if payee == "" {
 		payee = "cycle"
 	}
+	planner := d.Planner
+	if planner == "" {
+		planner = "rules"
+	}
+	chosen := d.PlannerAction
+	if chosen == "" {
+		chosen = d.Action
+	}
+	rationale := d.Rationale
+	if rationale == "" {
+		rationale = d.Reason
+	}
+	modelID := d.ModelID
+	if modelID == "" {
+		modelID = "rules"
+	}
 	return DecisionHash(Canonical{
-		V:           1,
-		AgentID:     policy.AgentID,
-		ChainID:     policy.ChainID,
-		Vault:       policy.Vault,
-		PayableID:   d.PayableID,
-		Action:      d.Action,
-		Category:    d.Category,
-		Payee:       payee,
-		AmountUnits: amount,
-		ReasonCode:  d.ReasonCode,
+		V:             2,
+		AgentID:       policy.AgentID,
+		ChainID:       policy.ChainID,
+		Vault:         policy.Vault,
+		PayableID:     d.PayableID,
+		Action:        d.Action,
+		Category:      d.Category,
+		Payee:         payee,
+		AmountUnits:   amount,
+		ReasonCode:    d.ReasonCode,
+		Planner:       planner,
+		ModelID:       modelID,
+		PlannerAction: chosen,
+		Rationale:     rationale,
+		PromptHash:    d.PromptHash,
+		RiskNotes:     d.RiskNotes,
+		Confidence:    d.Confidence,
+		Disagree:      d.Disagree,
 	})
 }
 
@@ -293,14 +343,27 @@ func writeDecision(log *AuditLog, runID string, d Decision) error {
 	if err := auditPayload(log, runID, "decision", d.DecisionHash, "", "", d.Product, d); err != nil {
 		return err
 	}
-	return auditPayload(log, runID, "execution", d.DecisionHash, d.TxHash, d.Outcome, d.Product, map[string]any{
-		"action":       d.Action,
-		"payable_id":   d.PayableID,
-		"request_id":   d.RequestID,
-		"circle":       d.Product,
-		"circle_tx_id": d.CircleTxID,
-		"circle_state": d.CircleState,
-	})
+	payload := map[string]any{
+		"action":        d.Action,
+		"payable_id":    d.PayableID,
+		"request_id":    d.RequestID,
+		"circle":        d.Product,
+		"circle_tx_id":  d.CircleTxID,
+		"circle_state":  d.CircleState,
+		"model_id":      d.ModelID,
+		"rationale":     d.Rationale,
+		"planner":       d.Planner,
+		"llm_disagreed": d.Disagree,
+	}
+	if err := auditPayload(log, runID, "execution", d.DecisionHash, d.TxHash, d.Outcome, d.Product, payload); err != nil {
+		return err
+	}
+	if d.Disagree {
+		return auditPayload(log, runID, "planner_disagree", d.DecisionHash, "", d.Action, d.Product, map[string]any{
+			"hard_note": d.SoftNote, "planner_action": d.PlannerAction, "rationale": d.Rationale, "model_id": d.ModelID,
+		})
+	}
+	return nil
 }
 
 func auditPayload(log *AuditLog, runID, kind, decisionHash, txHash, outcome, circle string, payload any) error {

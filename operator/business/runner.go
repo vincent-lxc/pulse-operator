@@ -131,6 +131,7 @@ func runLocked(ctx context.Context, cfg treasury.Config) (treasury.Report, error
 		Manual:        manual,
 		CircleProduct: cfg.ExecutorProduct(),
 		LimitNote:     limitNote,
+		Plan:          planFunc(cfg),
 	})
 	if err != nil {
 		return treasury.Report{}, err
@@ -432,6 +433,14 @@ func persist(cfg treasury.Config, report treasury.Report, manualCodes []string) 
 		row.CircleProduct = d.Product
 		row.CircleTxID = d.CircleTxID
 		row.CircleState = d.CircleState
+		row.Rationale = d.Rationale
+		row.ModelID = d.ModelID
+		row.PlannerAction = d.PlannerAction
+		row.PromptHash = d.PromptHash
+		row.RiskNotes = d.RiskNotes
+		row.Confidence = d.Confidence
+		row.PlannerRaw = d.PlannerRaw
+		row.LatencyMS = d.LatencyMS
 		if err := models.InsertDecision(row); err != nil {
 			return err
 		}
@@ -523,6 +532,8 @@ func payableState(d treasury.Decision) string {
 			return ""
 		}
 		return "escalated"
+	case treasury.ActionReject:
+		return "closed"
 	}
 	return ""
 }

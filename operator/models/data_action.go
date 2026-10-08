@@ -51,6 +51,7 @@ func EnsureStorage() error {
 		NewDecisionRecord(),
 		NewApproval(),
 		NewCycleSnapshot(),
+		NewBill(),
 	} {
 		if err := ensureModel(model); err != nil {
 			return err
@@ -76,5 +77,5 @@ func migrateStorage() error {
 	if !ok || migrator == nil {
 		return nil
 	}
-	return migrator.AutoMigrate(NewPayable(), NewDecisionRecord(), NewApproval())
+	return migrator.AutoMigrate(NewPayable(), NewDecisionRecord(), NewApproval(), NewBill())
 }

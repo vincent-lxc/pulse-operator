@@ -1,0 +1,60 @@
+# Arc testnet + Base Sepolia. Porkbun sandbox has no USDC; point apiBase at a local mock for x402.
+mode: testnet
+agentID: pulse-operator
+chainID: "5042002"
+vault: "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01"
+agent: "0xb71c11F7b28D9A912e7C3ACfbe423f7DeA568DEa"
+usdc: "0x3600000000000000000000000000000000000000"
+chainDriver: rpc
+ledger: testdata/ledger.yaml
+auditLog: data/audit-testnet.jsonl
+dueHorizon: 168h
+cooldown: 1h
+reserveFloorUSDC: "8.00"
+reserveTargetUSDC: "10.00"
+# API and gRPC bind here. The admin view (-view, default 80) listens on all interfaces.
+# testtoken cannot be disabled and treats RFC1918 as local. Firewall the view, or pass -view 0.
+# Testnet still starts without acknowledgeExposedAdminView. Mainnet does not.
+listen: 127.0.0.1
+loopEnabled: false
+maxSpendPerRunUSDC: "15"
+executor: raw-key
+planner:
+  driver: rules
+porkbun:
+  apiBase: http://127.0.0.1:4020
+  apiKeyEnv: PORKBUN_API_KEY
+  secretEnv: PORKBUN_SECRET_API_KEY
+  monthlyLimitCents: 10000
+  dailyCap: 10
+  feeBufferUSDC: "0.02"
+procurement:
+  address: "0x0000000000000000000000000000000000000000"
+  keyEnv: PROCUREMENT_PRIVATE_KEY
+base:
+  chainID: "84532"
+  rpcEnv: BASE_RPC_URL
+  usdc: "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+cctpBridge:
+  forward: true
+  allowStandard: false
+  feeLevel: med
+  sourceDomain: 26
+  destDomain: 6
+  tokenMessenger: "0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA"
+secrets:
+  rpcEnv: ARC_RPC_URL
+  agentKeyEnv: OPERATOR_PRIVATE_KEY
+  ownerKeyEnv: OWNER_PRIVATE_KEY
+gas:
+  maxFeePerGasGwei: 50
+  maxPriorityFeePerGasGwei: 2
+circle:
+  blockchain: ARC-TESTNET
+  apiBase: https://api.circle.com
+  irisBase: https://iris-api-sandbox.circle.com
+  apiKeyEnv: CIRCLE_API_KEY
+  entitySecretEnv: CIRCLE_ENTITY_SECRET
+  walletIDEnv: CIRCLE_WALLET_ID
+  ownerWalletIDEnv: CIRCLE_OWNER_WALLET_ID
+  feeLevel: MEDIUM

@@ -43,6 +43,7 @@ func (own *Service) Routers() []types.IRouter {
 	routers = append(routers, manage.NewPayableManage().Routers()...)
 	routers = append(routers, manage.NewRevenueManage().Routers()...)
 	routers = append(routers, manage.NewDecisionManage().Routers()...)
+	routers = append(routers, manage.NewBillManage().Routers()...)
 	routers = append(routers, manage.NewApprovalManage().Routers()...)
 	routers = append(routers, manage.NewCycleManage().Routers()...)
 	routers = append(routers,

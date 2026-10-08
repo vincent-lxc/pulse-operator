@@ -16,6 +16,13 @@ categories:
     period_seconds: 604800
     payees:
       - "0x2222222222222222222222222222222222222222"
+  - name: domains
+    budget_usdc: "30.00"
+    per_tx_cap_usdc: "15.00"
+    spent_usdc: "0"
+    period_seconds: 1209600
+    payees:
+      - "0x0000000000000000000000000000000000000001"
 inflows:
   - tx_hash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     from: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

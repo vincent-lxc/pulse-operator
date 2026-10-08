@@ -22,8 +22,9 @@ cooldown: 1h
 reserveFloorUSDC: "8.00"
 reserveTargetUSDC: "10.00"
 clock: ""
-# API and gRPC bind here. OPERATOR_BIND overrides. Core's admin view (-view) still
-# listens on all interfaces because the framework hardcodes that address.
+# API and gRPC bind here. OPERATOR_BIND overrides. Core's admin view (-view, default 80)
+# listens on all interfaces. testtoken cannot be disabled and treats RFC1918 as local.
+# Firewall the view or pass -view 0. Live still starts without acknowledgeExposedAdminView.
 listen: 127.0.0.1
 # Set loopEnabled true only with loopInterval and maxSpendPerRunUSDC. Default is off.
 loopEnabled: false

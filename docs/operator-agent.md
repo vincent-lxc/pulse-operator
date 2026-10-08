@@ -70,7 +70,7 @@ No chain write happens. `chainDriver: mock` is the offline snapshot. A later moc
 
 USDC `Transfer` logs are read in chunks of `logChunk` (default 9000). The first scan is the last `logLookback` blocks unless `fullLogScan: true`. `data/log-cursor.json` stores the last scanned block. Public `https://rpc.testnet.arc.io` often returns HTTP 429; RPC calls retry with backoff. Fallback endpoint: `https://rpc.blockdaemon.testnet.arc.io`. On-chain inflows are tagged `local:rpc`.
 
-The API and gRPC processes bind to `listen` (default `127.0.0.1`). `OPERATOR_BIND` overrides it. Loopback binds also set the framework local-visit check. Core's admin view (`-view`) still listens on `:<port>` on every interface; that address is hardcoded in the framework.
+The API and gRPC bind to `listen` (default `127.0.0.1`). `OPERATOR_BIND` overrides that. Loopback binds also set the framework local-visit check. The admin view (`-view`, default 80) listens on all interfaces (`:<port>`). `digitalwayhk/core` hardcodes that address and has no bind option. `-view 0` turns the view off. This repo cannot disable `/api/servermanage/testtoken`: the framework registers it, and its local-visit check treats RFC1918 addresses (including `172.16.0.0/12`) as local, so a LAN client can obtain an admin token. Mainnet startup fails when the view port is not 0 unless the config sets `acknowledgeExposedAdminView: true` or the process has `OPERATOR_ACK_EXPOSED_VIEW=1`. Testnet and live still start; firewall the port to localhost or use an SSH tunnel before opening the UI.
 
 ## Admin view and HTTP
 
@@ -89,11 +89,11 @@ go build -o bin/pulse ./cmd/pulse
 | Framework `server` service | http://127.0.0.1:18091 |
 | Operator API | http://127.0.0.1:18092 |
 
-`-p` is the base port. Core gives DataCenterID 1 to its built-in `server` service, so that process listens on 18091. This service is registered second and listens on 18092 (`base + DataCenterID - 1`). The view process proxies `/api/*`, so the same dashboard URL also works on port 43123. gRPC follows the same split: pass `-grpc 19091` and the operator gRPC port is 19092. HTTP and gRPC bind to 127.0.0.1 unless `OPERATOR_BIND` or `listen` says otherwise.
+`-p` is the base port. Core gives DataCenterID 1 to its built-in `server` service, so that process listens on 18091. This service is registered second and listens on 18092 (`base + DataCenterID - 1`). The view process proxies `/api/*`, so the same dashboard URL also works on port 43123. gRPC follows the same split: pass `-grpc 19091` and the operator gRPC port is 19092. HTTP and gRPC bind to 127.0.0.1 unless `OPERATOR_BIND` or `listen` says otherwise. The view port itself listens on every interface; keep 43123 on localhost with a firewall or a tunnel. A fresh database shows only System until **更新菜单** runs once; Treasury (金库) appears after that.
 
-In the admin UI open menu management, run **更新菜单**, then open Decisions, Payables, Approvals, Revenue, Categories, Cycles. Manage routes are view and search only, except Approvals, which also has Approve and Reject. The local view signs a TestToken for `platform-admin` by itself.
+In the admin UI open menu management, run **更新菜单**, then open Decisions, Payables, Approvals, Bills, Revenue, Categories, Cycles. Manage routes are view and search only, except Approvals (Approve and Reject for a vault request) and, in dry-run only, Bills (Approve, plus Reopen and Close). Testnet, live, and mainnet hide Bills → Approve; those modes approve a bill only with `pulse bill approve --id ... --yes` (mainnet also needs `--i-understand-real-money`). Approve and Reject, on both the manage Approvals page and `POST /api/operator/approve|reject`, reject a caller whose TCP address, `X-Forwarded-For`, or `X-Real-Ip` is not loopback. The same check covers Bills → Reopen and Close, and the public `runonce`, `recordrevenue`, `cctp`, and `gateway` handlers. The local view signs a TestToken for `platform-admin` by itself, including for RFC1918 clients, because that route lives in the framework. A token from that route still cannot call those handlers unless the TCP peer is loopback.
 
-Decisions and Approvals include `circle_tx_id` and `circle_state` when Circle submitted the transaction. The browser document title stays **BitZoom Exchange Admin**. Core embeds that string in the admin frontend and `IService` has no title setting, so this service cannot rename it. The sidebar name is still 金库 / Treasury.
+Decisions and Approvals include `circle_tx_id` and `circle_state` when Circle submitted the transaction. The Decisions view also shows `rationale`, `model_id`, and `prompt_hash` from the planner. The browser document title is **Pulse Operator**: the process serves a rewritten copy of the embedded admin frontend. The sidebar name is still 金库 / Treasury.
 
 ```bash
 curl -s http://127.0.0.1:18092/api/operator/dashboard
@@ -118,7 +118,7 @@ Each run copies `pendingRequestIds()` into Approvals. Loading the dashboard does
 
 Iris returns 404 with its message when a burn is unknown (`POST /api/operator/cctpin`), instead of an empty 500.
 
-`recordrevenue` is public on purpose for the local demo. Do not expose the process to the internet. `TestToken` on `/api/servermanage/*` is local-only; still keep it off a public interface.
+`recordrevenue`, `runonce`, `cctp`, and `gateway` accept a body only from a loopback TCP peer. Do not expose the process to the internet. `TestToken` on `/api/servermanage/*` is issued to RFC1918 clients by the framework; those tokens still cannot call the handlers above unless the TCP peer is loopback. A Circle webhook has to be forwarded from this machine without a non-loopback `X-Forwarded-For`.
 
 CSV ledgers use the header `id,category,payee,amount_usdc,due,memo`. YAML is the shape in `testdata/ledger.yaml`.
 
@@ -225,9 +225,9 @@ Run the two Go modules separately. There is no root `go.work`: the payment CLI a
 
 ## What is stubbed
 
-- LLM call. The hook exists; the default advisor is a no-op; a configured URL still cannot flip the action.
+- The legacy `llm` advisor hook. It is still a no-op and cannot flip an action. Bill and payable planning goes through `planner.driver` instead (`rules` or `gateway`).
 - Creating the Circle webhook subscription. The receiver and the signature check are in this process. Registering the public HTTPS endpoint is a Console / `POST /v2/notifications/subscriptions/permissionless` step.
 - Agent-wallet spending-limit changes. Reading the supported chain is in code. Setting a limit needs a human email OTP, and Circle rejects the call on testnet.
 - CCTP discovery without a burn transaction hash. Iris looks up one source transaction. It does not stream every mint to the vault. The USDC `Transfer` log still catches the mint after it lands.
-- The admin view listen address. API and gRPC honor `listen` / `OPERATOR_BIND`. The framework's HTML server always uses `:<view port>`.
-- The admin document title. The embedded frontend is **BitZoom Exchange Admin**. There is no config key for it.
+- The admin view listen address, and `/api/servermanage/testtoken`. API and gRPC follow `listen` / `OPERATOR_BIND` (default `127.0.0.1`). The view listens on `:<port>` because the framework hardcodes it, and this repo cannot unregister testtoken or stop it treating RFC1918 as local. Mainnet will not start with that port open unless `acknowledgeExposedAdminView` or `OPERATOR_ACK_EXPOSED_VIEW=1` is set. `-view 0` is the setting that keeps the port closed.
+- The admin sidebar title. The document title is Pulse Operator. The sidebar stays 金库 / Treasury.

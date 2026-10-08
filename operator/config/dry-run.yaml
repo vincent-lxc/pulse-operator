@@ -18,6 +18,8 @@ cooldown: 1h
 reserveFloorUSDC: "8.00"
 reserveTargetUSDC: "10.00"
 clock: "2026-10-03T12:00:00Z"
+# API and gRPC bind here. The admin view (-view, default 80) listens on all interfaces.
+# Dry-run does not refuse startup. The fixture balance resets on each new process.
 listen: 127.0.0.1
 loopEnabled: false
 loopInterval: 0s
@@ -41,6 +43,9 @@ gas:
   gasLimit: 0
 # Dry-run tags decisions as Circle Wallets and does not call Circle.
 # Live mode with the same executor sends pay through the Wallets API.
+# planner.driver rules keeps CI and this demo off the network. gateway calls Vercel AI Gateway.
+planner:
+  driver: rules
 executor: circle-wallets
 circle:
   blockchain: ARC-TESTNET

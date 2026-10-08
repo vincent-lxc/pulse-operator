@@ -13,36 +13,102 @@ import (
 
 // Config 是 dry-run 与 live 共用的配置。
 type Config struct {
-	Mode               string        `yaml:"mode"`
-	AgentID            string        `yaml:"agentID"`
-	ChainID            string        `yaml:"chainID"`
-	Vault              string        `yaml:"vault"`
-	Agent              string        `yaml:"agent"`
-	USDC               string        `yaml:"usdc"`
-	ChainDriver        string        `yaml:"chainDriver"`
-	VaultFixture       string        `yaml:"vaultFixture"`
-	Ledger             string        `yaml:"ledger"`
-	AuditLog           string        `yaml:"auditLog"`
-	FromBlock          uint64        `yaml:"fromBlock"`
-	DueHorizon         time.Duration `yaml:"dueHorizon"`
-	Cooldown           time.Duration `yaml:"cooldown"`
-	ReserveFloorUSDC   string        `yaml:"reserveFloorUSDC"`
-	ReserveTargetUSDC  string        `yaml:"reserveTargetUSDC"`
-	Clock              string        `yaml:"clock"`
-	Listen             string        `yaml:"listen"`
-	LoopEnabled        bool          `yaml:"loopEnabled"`
-	LoopInterval       time.Duration `yaml:"loopInterval"`
-	MaxSpendPerRunUSDC string        `yaml:"maxSpendPerRunUSDC"`
-	LogLookback        uint64        `yaml:"logLookback"`
-	LogChunk           uint64        `yaml:"logChunk"`
-	FullLogScan        bool          `yaml:"fullLogScan"`
-	ScanCursor         string        `yaml:"scanCursor"`
-	LLM                LLMConfig     `yaml:"llm"`
-	Notify             NotifyConfig  `yaml:"notify"`
-	Secrets            SecretConfig  `yaml:"secrets"`
-	Gas                GasConfig     `yaml:"gas"`
-	Executor           string        `yaml:"executor"`
-	Circle             CircleConfig  `yaml:"circle"`
+	Mode               string            `yaml:"mode"`
+	AgentID            string            `yaml:"agentID"`
+	ChainID            string            `yaml:"chainID"`
+	Vault              string            `yaml:"vault"`
+	Agent              string            `yaml:"agent"`
+	USDC               string            `yaml:"usdc"`
+	ChainDriver        string            `yaml:"chainDriver"`
+	VaultFixture       string            `yaml:"vaultFixture"`
+	Ledger             string            `yaml:"ledger"`
+	AuditLog           string            `yaml:"auditLog"`
+	FromBlock          uint64            `yaml:"fromBlock"`
+	DueHorizon         time.Duration     `yaml:"dueHorizon"`
+	Cooldown           time.Duration     `yaml:"cooldown"`
+	ReserveFloorUSDC   string            `yaml:"reserveFloorUSDC"`
+	ReserveTargetUSDC  string            `yaml:"reserveTargetUSDC"`
+	Clock              string            `yaml:"clock"`
+	Listen             string            `yaml:"listen"`
+	LoopEnabled        bool              `yaml:"loopEnabled"`
+	LoopInterval       time.Duration     `yaml:"loopInterval"`
+	MaxSpendPerRunUSDC string            `yaml:"maxSpendPerRunUSDC"`
+	LogLookback        uint64            `yaml:"logLookback"`
+	LogChunk           uint64            `yaml:"logChunk"`
+	FullLogScan        bool              `yaml:"fullLogScan"`
+	ScanCursor         string            `yaml:"scanCursor"`
+	LLM                LLMConfig         `yaml:"llm"`
+	Notify             NotifyConfig      `yaml:"notify"`
+	Secrets            SecretConfig      `yaml:"secrets"`
+	Gas                GasConfig         `yaml:"gas"`
+	Executor           string            `yaml:"executor"`
+	Circle             CircleConfig      `yaml:"circle"`
+	Planner            PlannerConfig     `yaml:"planner"`
+	Porkbun            PorkbunConfig     `yaml:"porkbun"`
+	Procurement        ProcurementConfig `yaml:"procurement"`
+	Base               BaseChainConfig   `yaml:"base"`
+	CCTP               BridgeConfig      `yaml:"cctpBridge"`
+	BillsFile          string            `yaml:"billsFile"`
+	MaxBillUSDC        string            `yaml:"maxBillUSDC"`
+	// AcknowledgeExposedAdminView 确认操作者知道管理界面监听所有网卡，且框架 testtoken 会向局域网签发管理员 token。
+	// 主网在 -view 不是 0 时，没有这项或 OPERATOR_ACK_EXPOSED_VIEW=1 就拒绝启动。
+	AcknowledgeExposedAdminView bool `yaml:"acknowledgeExposedAdminView"`
+}
+
+// PlannerConfig 选择规则或 Vercel AI Gateway。密钥只写环境变量名。
+type PlannerConfig struct {
+	Driver    string        `yaml:"driver"`
+	Model     string        `yaml:"model"`
+	BaseURL   string        `yaml:"baseURL"`
+	APIKeyEnv string        `yaml:"apiKeyEnv"`
+	Timeout   time.Duration `yaml:"timeout"`
+	JevKeyEnv string        `yaml:"jevKeyEnv"`
+	JevURL    string        `yaml:"jevURL"`
+	JevModel  string        `yaml:"jevModel"`
+}
+
+// PorkbunConfig 是域名账单的报价和限额。密钥只写环境变量名或 0600 路径。
+type PorkbunConfig struct {
+	APIBase             string `yaml:"apiBase"`
+	APIKeyEnv           string `yaml:"apiKeyEnv"`
+	APIKeyFile          string `yaml:"apiKeyFile"`
+	SecretEnv           string `yaml:"secretEnv"`
+	SecretFile          string `yaml:"secretFile"`
+	MonthlyLimitCents   int64  `yaml:"monthlyLimitCents"`
+	DailyCap            int    `yaml:"dailyCap"`
+	PriceToleranceCents int64  `yaml:"priceToleranceCents"`
+	FeeBufferUSDC       string `yaml:"feeBufferUSDC"`
+}
+
+// ProcurementConfig 是代理采购钱包。Arc 与 Base 地址不一致时必须显式写出 Base 地址。
+type ProcurementConfig struct {
+	Address          string `yaml:"address"`
+	BaseAddress      string `yaml:"baseAddress"`
+	WalletIDEnv      string `yaml:"walletIDEnv"`
+	WalletIDFile     string `yaml:"walletIDFile"`
+	BaseWalletIDEnv  string `yaml:"baseWalletIDEnv"`
+	BaseWalletIDFile string `yaml:"baseWalletIDFile"`
+	KeyEnv           string `yaml:"keyEnv"`
+	KeyFile          string `yaml:"keyFile"`
+}
+
+// BaseChainConfig 是 CCTP 的目标链。
+type BaseChainConfig struct {
+	ChainID string `yaml:"chainID"`
+	RPCEnv  string `yaml:"rpcEnv"`
+	USDC    string `yaml:"usdc"`
+}
+
+// BridgeConfig 是 Arc 到 Base 的 CCTP V2。
+type BridgeConfig struct {
+	Forward         bool   `yaml:"forward"`
+	AllowStandard   bool   `yaml:"allowStandard"`
+	FeeLevel        string `yaml:"feeLevel"`
+	SourceDomain    uint32 `yaml:"sourceDomain"`
+	DestDomain      uint32 `yaml:"destDomain"`
+	TokenMessenger  string `yaml:"tokenMessenger"`
+	BaseMessenger   string `yaml:"baseMessenger"`
+	BaseTransmitter string `yaml:"baseTransmitter"`
 }
 
 // CircleConfig 选择 Circle 产品。值里只有环境变量名和文件路径，没有密钥。
@@ -195,6 +261,69 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Notify.ChatEnv == "" {
 		cfg.Notify.ChatEnv = "TELEGRAM_CHAT_ID"
 	}
+	if cfg.Planner.Driver == "" {
+		cfg.Planner.Driver = "rules"
+	}
+	if cfg.Planner.Model == "" {
+		cfg.Planner.Model = "openai/gpt-5.4-nano"
+	}
+	if cfg.Planner.BaseURL == "" {
+		cfg.Planner.BaseURL = "https://ai-gateway.vercel.sh/v1"
+	}
+	if cfg.Planner.APIKeyEnv == "" {
+		cfg.Planner.APIKeyEnv = "AI_GATEWAY_API_KEY"
+	}
+	if cfg.Planner.Timeout <= 0 {
+		cfg.Planner.Timeout = 20 * time.Second
+	}
+	if cfg.Planner.JevKeyEnv == "" {
+		cfg.Planner.JevKeyEnv = "JEV_API_KEY"
+	}
+	if cfg.Planner.JevURL == "" {
+		cfg.Planner.JevURL = "https://api.typesafe.ai/v1/systemone"
+	}
+	if cfg.Planner.JevModel == "" {
+		cfg.Planner.JevModel = "jev-latest"
+	}
+	if cfg.Porkbun.APIBase == "" {
+		cfg.Porkbun.APIBase = "https://api.porkbun.com/api/json/v3"
+	}
+	if cfg.Porkbun.APIKeyEnv == "" {
+		cfg.Porkbun.APIKeyEnv = "PORKBUN_API_KEY"
+	}
+	if cfg.Porkbun.SecretEnv == "" {
+		cfg.Porkbun.SecretEnv = "PORKBUN_SECRET_API_KEY"
+	}
+	if cfg.Porkbun.MonthlyLimitCents == 0 {
+		cfg.Porkbun.MonthlyLimitCents = 10000
+	}
+	if cfg.Porkbun.DailyCap == 0 {
+		cfg.Porkbun.DailyCap = 10
+	}
+	if cfg.Porkbun.FeeBufferUSDC == "" {
+		cfg.Porkbun.FeeBufferUSDC = "0.02"
+	}
+	if cfg.Procurement.WalletIDEnv == "" {
+		cfg.Procurement.WalletIDEnv = "CIRCLE_PROCUREMENT_WALLET_ID"
+	}
+	if cfg.Procurement.BaseWalletIDEnv == "" {
+		cfg.Procurement.BaseWalletIDEnv = "CIRCLE_PROCUREMENT_BASE_WALLET_ID"
+	}
+	if cfg.Procurement.KeyEnv == "" {
+		cfg.Procurement.KeyEnv = "PROCUREMENT_PRIVATE_KEY"
+	}
+	if cfg.Base.RPCEnv == "" {
+		cfg.Base.RPCEnv = "BASE_RPC_URL"
+	}
+	if cfg.CCTP.SourceDomain == 0 {
+		cfg.CCTP.SourceDomain = 26
+	}
+	if cfg.CCTP.DestDomain == 0 {
+		cfg.CCTP.DestDomain = 6
+	}
+	if cfg.CCTP.FeeLevel == "" {
+		cfg.CCTP.FeeLevel = "med"
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -203,8 +332,10 @@ func LoadConfig(path string) (Config, error) {
 
 // Validate 检查模式、储备和 gas 下限。
 func (c Config) Validate() error {
-	if c.Mode != "dry-run" && c.Mode != "live" {
-		return fmt.Errorf("mode must be dry-run or live")
+	switch c.Mode {
+	case "dry-run", "live", "testnet", "mainnet":
+	default:
+		return fmt.Errorf("mode must be dry-run, testnet, or mainnet")
 	}
 	if c.ChainDriver != "mock" && c.ChainDriver != "rpc" {
 		return fmt.Errorf("chainDriver must be mock or rpc")
@@ -214,8 +345,19 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("executor must be raw-key, circle-wallets, or circle-agent")
 	}
-	if c.Mode == "live" && c.ChainDriver != "rpc" {
-		return fmt.Errorf("live mode requires chainDriver rpc")
+	if (c.Mode == "live" || c.Mode == "testnet" || c.Mode == "mainnet") && c.ChainDriver != "rpc" {
+		return fmt.Errorf("%s mode requires chainDriver rpc", c.Mode)
+	}
+	if c.Mode == "mainnet" && c.ChainID != "5042" {
+		return fmt.Errorf("mainnet mode requires chainID 5042")
+	}
+	if c.Mode == "testnet" && c.ChainID != "5042002" {
+		return fmt.Errorf("testnet mode requires chainID 5042002")
+	}
+	switch c.Planner.Driver {
+	case "", "rules", "gateway":
+	default:
+		return fmt.Errorf("planner.driver must be rules or gateway")
 	}
 	floor, err := ParseUSDCAllowZero(c.ReserveFloorUSDC)
 	if err != nil {
@@ -321,4 +463,21 @@ func BlockchainForChain(chainID string) string {
 		return "ARC"
 	}
 	return "ARC-TESTNET"
+}
+
+// BlockchainForBase 是 x402 签名要用的 Base 链名。不要拿 Arc 钱包去签。
+func BlockchainForBase(chainID, mode string) string {
+	if chainID == "8453" || mode == "mainnet" {
+		return "BASE"
+	}
+	return "BASE-SEPOLIA"
+}
+
+// ForwardCCTP 在没有打开标准转账回退时使用 Forwarding Service。
+// 只写 allowStandard: true 且 forward: false 才改走自助 receiveMessage。
+func (c Config) ForwardCCTP() bool {
+	if c.CCTP.AllowStandard && !c.CCTP.Forward {
+		return false
+	}
+	return true
 }
