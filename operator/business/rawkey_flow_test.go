@@ -402,7 +402,7 @@ func runFakeMainnetBill(t *testing.T, opt fakeBillOpts) (*models.Bill, *models.B
 		Secrets:   treasury.SecretConfig{RPCEnv: "ARC_RPC_URL", AgentKeyEnv: "OPERATOR_PRIVATE_KEY", OwnerKeyEnv: "OWNER_PRIVATE_KEY"},
 		Porkbun: treasury.PorkbunConfig{
 			APIBase: pork.URL, APIKeyEnv: "PORKBUN_API_KEY", SecretEnv: "PORKBUN_SECRET_API_KEY",
-			MonthlyLimitCents: 10000, DailyCap: 10, FeeBufferUSDC: "0.02",
+			MonthlyLimitCents: 100_000_000, DailyCap: 100_000, FeeBufferUSDC: "0.02",
 		},
 		Procurement: treasury.ProcurementConfig{Address: proc.Hex(), KeyEnv: "PROCUREMENT_PRIVATE_KEY"},
 		Base:        treasury.BaseChainConfig{ChainID: "8453", RPCEnv: "BASE_RPC_URL", USDC: procurement.BaseUSDC},
