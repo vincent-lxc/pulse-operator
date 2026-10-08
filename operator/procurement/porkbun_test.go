@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -77,6 +78,39 @@ func TestPorkbunInProgressDoesNotSignAgain(t *testing.T) {
 	}
 	if order.Code != "PAYMENT_IN_PROGRESS" {
 		t.Fatalf("%+v", order)
+	}
+}
+
+func TestStoredCheckoutDoesNotSignWhenPaymentRequiredAgain(t *testing.T) {
+	var calls, signed int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			signed++
+		}
+		if r.Header.Get("Idempotency-Key") != "bill-pulse-xyz" {
+			t.Errorf("idempotency %q", r.Header.Get("Idempotency-Key"))
+		}
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"usdcCheckoutId":"chk-1"`) {
+			t.Errorf("body %s", body)
+		}
+		w.Header().Set("PAYMENT-REQUIRED", "again")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`))
+	}))
+	defer srv.Close()
+	client := &Porkbun{BaseURL: srv.URL, MinInterval: -1}
+	order, err := Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", Kind: "domain_register", CostCents: 204, CheckoutID: "chk-1",
+		Idempotency: "bill-pulse-xyz",
+		Sign: func(Accept, time.Time) (Payment, error) {
+			t.Fatal("signed a second x402 payload")
+			return Payment{}, nil
+		},
+	})
+	if !errors.Is(err, ErrCheckoutNeedsReview) || order.CheckoutID != "chk-1" || calls != 1 || signed != 0 {
+		t.Fatalf("err %v order %+v calls %d signed %d", err, order, calls, signed)
 	}
 }
 

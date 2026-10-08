@@ -15,7 +15,7 @@ func confirmCCTP(ctx context.Context, cfg treasury.Config) ([]treasury.Inflow, [
 	if cfg.Mode != "live" || !cfg.Circle.CCTP.Enabled || len(cfg.Circle.CCTP.Burns) == 0 {
 		return nil, nil, nil
 	}
-	client := treasury.CCTPClient{BaseURL: cfg.Circle.IrisBase}
+	client := treasury.CCTPClient{BaseURL: cfg.IrisAPI()}
 	var inflows []treasury.Inflow
 	var codes []string
 	for _, burn := range cfg.Circle.CCTP.Burns {
@@ -38,7 +38,7 @@ func confirmCCTP(ctx context.Context, cfg treasury.Config) ([]treasury.Inflow, [
 
 // IngestCCTP 按源域和 burn 交易向 Iris 确认一笔铸到金库的 USDC。
 func IngestCCTP(ctx context.Context, cfg treasury.Config, sourceDomain uint32, txHash string) (treasury.Inflow, error) {
-	client := treasury.CCTPClient{BaseURL: cfg.Circle.IrisBase}
+	client := treasury.CCTPClient{BaseURL: cfg.IrisAPI()}
 	in, err := client.FetchCCTP(ctx, sourceDomain, txHash, cfg.Vault)
 	if err != nil {
 		return treasury.Inflow{}, irisPublic(err)

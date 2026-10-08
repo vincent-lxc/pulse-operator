@@ -1,9 +1,13 @@
 package treasury
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 func TestKeyFileMustBeOwnerOnly(t *testing.T) {
@@ -35,6 +39,44 @@ func TestEnvKeyPreferredOverFile(t *testing.T) {
 	}
 	_, err := LoadPrivateKey("OPERATOR_PRIVATE_KEY_TEST", path)
 	if err == nil || !stringsContains(err.Error(), "invalid private key") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestJSONKeyFileRejectsMismatchedAddressAndGroupRead(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hexKey := hex.EncodeToString(crypto.FromECDSA(key))
+	addr := crypto.PubkeyToAddress(key.PublicKey).Hex()
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.json")
+	raw := []byte(`{"address":"0x1111111111111111111111111111111111111111","private_key":"0x` + hexKey + `"}`)
+	if err := os.WriteFile(bad, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadPrivateKey("", bad)
+	if err == nil || !strings.Contains(err.Error(), "does not match") || strings.Contains(err.Error(), hexKey) {
+		t.Fatalf("got %v", err)
+	}
+	okPath := filepath.Join(dir, "ok.json")
+	okRaw := []byte(`{"address":"` + addr + `","private_key":"0x` + hexKey + `","purpose":"test"}`)
+	if err := os.WriteFile(okPath, okRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadPrivateKey("", okPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if crypto.PubkeyToAddress(got.PublicKey).Hex() != addr {
+		t.Fatalf("address %s", crypto.PubkeyToAddress(got.PublicKey).Hex())
+	}
+	group := filepath.Join(dir, "group.json")
+	if err := os.WriteFile(group, okRaw, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPrivateKey("", group); err == nil || !strings.Contains(err.Error(), "group") {
 		t.Fatalf("got %v", err)
 	}
 }

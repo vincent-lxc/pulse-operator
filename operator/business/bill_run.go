@@ -4,6 +4,7 @@ package business
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -176,9 +177,65 @@ func vaultTransferred(status string) bool {
 	}
 }
 
+// strictVault 是会花真钱的模式。模拟状态不能当成已经转出。
+func strictVault(mode string) bool {
+	switch mode {
+	case "testnet", "live", "mainnet":
+		return true
+	default:
+		return false
+	}
+}
+
+func realTxHash(tx string) bool {
+	tx = strings.TrimSpace(tx)
+	if len(tx) != 66 || !strings.HasPrefix(strings.ToLower(tx), "0x") {
+		return false
+	}
+	for _, c := range tx[2:] {
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func simulatedVault(status string) bool {
+	return strings.HasPrefix(status, "dry_run") || strings.HasPrefix(status, "simulated")
+}
+
+func onChainApproval(res vaultResult) bool {
+	if simulatedVault(res.Status) || !realTxHash(res.TxHash) {
+		return false
+	}
+	return res.Status == "approval" || strings.Contains(res.Status, "approval") || res.RequestID != ""
+}
+
 func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, maxFee, amount *big.Int) error {
-	if bill.VaultTx == "" {
+	if bill.ReasonCode == "vault_receipt_unknown" && realTxHash(bill.VaultTx) {
+		return fmt.Errorf("vault_receipt_unknown")
+	}
+	needVault := bill.VaultTx == ""
+	if strictVault(deps.cfg.Mode) && !realTxHash(bill.VaultTx) {
+		needVault = true
+	}
+	if needVault {
 		res, err := deps.vault(ctx, bill, amount, bill.DecisionHash)
+		if err != nil && realTxHash(res.TxHash) {
+			bill.VaultTx = res.TxHash
+			bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
+			bill.State = "failed_vault"
+			bill.ReasonCode = "vault_receipt_unknown"
+			bill.Reason = err.Error()
+			if saveErr := saveProgress(deps, bill); saveErr != nil {
+				return saveErr
+			}
+			return fmt.Errorf("vault_receipt_unknown: %w", err)
+		}
 		if err != nil {
 			bill.State = "failed_vault"
 			if strings.Contains(err.Error(), "DecisionAlreadyUsed") {
@@ -190,14 +247,36 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 			_ = saveProgress(deps, bill)
 			return err
 		}
-		bill.VaultTx = res.TxHash
-		bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
-		if res.Status == "approval" || (res.RequestID != "" && !vaultTransferred(res.Status)) {
-			bill.State = "escalated"
-			return saveProgress(deps, bill)
-		}
-		if vaultTransferred(res.Status) {
-			releaseSettled(deps, amount)
+		if strictVault(deps.cfg.Mode) {
+			if res.Status == "paid" && realTxHash(res.TxHash) {
+				bill.VaultTx = res.TxHash
+				bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
+				releaseSettled(deps, amount)
+			} else if onChainApproval(res) {
+				bill.VaultTx = res.TxHash
+				bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
+				bill.State = "escalated"
+				return saveProgress(deps, bill)
+			} else {
+				bill.VaultTx = ""
+				bill.State = "failed_vault"
+				bill.ReasonCode = "vault_not_broadcast"
+				bill.Reason = "vault pay was not broadcast"
+				if err := saveProgress(deps, bill); err != nil {
+					return err
+				}
+				return fmt.Errorf("vault_not_broadcast")
+			}
+		} else {
+			bill.VaultTx = res.TxHash
+			bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
+			if res.Status == "approval" || (res.RequestID != "" && !vaultTransferred(res.Status)) {
+				bill.State = "escalated"
+				return saveProgress(deps, bill)
+			}
+			if vaultTransferred(res.Status) {
+				releaseSettled(deps, amount)
+			}
 		}
 		bill.State = "vault_paid"
 		if err := saveProgress(deps, bill); err != nil {
@@ -216,6 +295,12 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 				bill.CircleTxIDs = joinNote(bill.CircleTxIDs, burned.CircleTxID)
 			}
 			bill.BaseURL = explorerBase(deps.cfg.Base.ChainID, burned.MintTx)
+		}
+		if errors.Is(err, errAwaitingMint) {
+			bill.State = "bridged"
+			bill.ReasonCode = "awaiting_mint"
+			bill.Reason = "waiting for the forwarded mint"
+			return saveProgress(deps, bill)
 		}
 		if err != nil {
 			bill.State = "failed_bridge"
@@ -239,6 +324,24 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 	}
 	if bill.PorkbunOrderID == "" && bill.State != "kept_as_credit" {
 		paid, err := deps.merchant(ctx, bill)
+		if errors.Is(err, errAwaitingMint) {
+			bill.State = "bridged"
+			bill.ReasonCode = "awaiting_mint"
+			bill.Reason = "Base USDC is not available to the payer yet"
+			return saveProgress(deps, bill)
+		}
+		if errors.Is(err, procurement.ErrCheckoutNeedsReview) {
+			if paid.CheckoutID != "" {
+				bill.PorkbunCheckoutID = paid.CheckoutID
+			}
+			bill.State = "failed_merchant"
+			bill.ReasonCode = "checkout_needs_review"
+			bill.Reason = "porkbun asked for another x402 signature on an existing checkout"
+			if saveErr := saveProgress(deps, bill); saveErr != nil {
+				return saveErr
+			}
+			return err
+		}
 		if err != nil {
 			bill.State = "failed_merchant"
 			bill.Reason = err.Error()

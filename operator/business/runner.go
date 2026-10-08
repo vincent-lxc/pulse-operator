@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -142,7 +143,24 @@ func runLocked(ctx context.Context, cfg treasury.Config) (treasury.Report, error
 	return report, nil
 }
 
-func openChain(ctx context.Context, cfg treasury.Config, payables []treasury.Payable) (treasury.Chain, func(), error) {
+// chainDial 只活在这一次拨号里。账单付款路径才打开广播，不能做成全局。
+type chainDial struct {
+	broadcast bool
+}
+
+// broadcastVault 让这一次 PolicyVault.pay 在 testnet 或 mainnet 上真正发送。
+// 只能在 authorizeBills 通过之后、同一次进程里使用。
+func broadcastVault() func(*chainDial) {
+	return func(d *chainDial) { d.broadcast = true }
+}
+
+func openChain(ctx context.Context, cfg treasury.Config, payables []treasury.Payable, opts ...func(*chainDial)) (treasury.Chain, func(), error) {
+	dial := chainDial{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&dial)
+		}
+	}
 	if cfg.ChainDriver == "mock" {
 		snap, err := treasury.LoadFixture(cfg.VaultFixture)
 		if err != nil {
@@ -189,6 +207,7 @@ func openChain(ctx context.Context, cfg treasury.Config, payables []treasury.Pay
 	client, err := treasury.DialLive(ctx, treasury.LiveOptions{
 		RPC:        rpc,
 		Mode:       cfg.Mode,
+		Broadcast:  dial.broadcast,
 		ChainID:    chainID,
 		Vault:      common.HexToAddress(cfg.Vault),
 		Agent:      common.HexToAddress(cfg.Agent),
@@ -250,7 +269,14 @@ func routeExecutor(cfg treasury.Config, base treasury.Chain, closeFn func()) (tr
 	}
 }
 
+// walletsClientBuilds 让测试确认主网没有构造 Circle 钱包客户端。
+var walletsClientBuilds atomic.Int32
+
 func walletsClient(cfg treasury.Config) (*treasury.WalletsClient, error) {
+	walletsClientBuilds.Add(1)
+	if cfg.Mode == "mainnet" {
+		return nil, fmt.Errorf("mainnet does not construct a Circle wallets client")
+	}
 	apiKey, err := treasury.LoadSecret(cfg.Circle.APIKeyEnv, cfg.Circle.APIKeyFile)
 	if err != nil {
 		return nil, err
