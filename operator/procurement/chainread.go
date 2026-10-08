@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -85,6 +86,30 @@ func TokenBalance(ctx context.Context, rpc, token, account string) (*big.Int, er
 		return nil, fmt.Errorf("balanceOf returned a short result")
 	}
 	return new(big.Int).SetBytes(raw[len(raw)-32:]), nil
+}
+
+// AuthorizationState 读取 USDC authorizationState(authorizer, nonce)。
+// 返回 true 表示这个 nonce 已经用过。
+func AuthorizationState(ctx context.Context, rpc, token, authorizer, nonceHex string) (bool, error) {
+	if !common.IsHexAddress(token) || !common.IsHexAddress(authorizer) {
+		return false, fmt.Errorf("authorizationState address is missing")
+	}
+	nonce := common.FromHex(strings.TrimSpace(nonceHex))
+	if len(nonce) != 32 {
+		return false, fmt.Errorf("authorization nonce must be 32 bytes")
+	}
+	sig := crypto.Keccak256([]byte("authorizationState(address,bytes32)"))[:4]
+	data := append([]byte{}, sig...)
+	data = append(data, common.LeftPadBytes(common.HexToAddress(authorizer).Bytes(), 32)...)
+	data = append(data, nonce...)
+	raw, err := callTo(ctx, rpc, common.HexToAddress(token), data)
+	if err != nil {
+		return false, fmt.Errorf("authorizationState: %w", err)
+	}
+	if len(raw) < 32 {
+		return false, fmt.Errorf("authorizationState returned a short result")
+	}
+	return new(big.Int).SetBytes(raw[len(raw)-32:]).Sign() != 0, nil
 }
 
 func callTo(ctx context.Context, rpc string, to common.Address, data []byte) ([]byte, error) {

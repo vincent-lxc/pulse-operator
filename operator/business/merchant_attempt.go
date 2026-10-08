@@ -16,15 +16,18 @@ import (
 // Signed 为真表示授权已经签好，并且在带签名的请求发出前落了库。
 // ValidBefore 和 Nonce 是 authorization 里的字段，不是签名，也不是密钥。
 type merchantAttempt struct {
-	N           int    `json:"n"`
-	Key         string `json:"key"`
-	At          string `json:"at"`
-	Outcome     string `json:"outcome"`
-	Reason      string `json:"reason,omitempty"`
-	Checkout    string `json:"checkout,omitempty"`
-	Signed      bool   `json:"signed,omitempty"`
-	ValidBefore int64  `json:"valid_before,omitempty"`
-	Nonce       string `json:"nonce,omitempty"`
+	N            int    `json:"n"`
+	Key          string `json:"key"`
+	At           string `json:"at"`
+	Outcome      string `json:"outcome"`
+	Reason       string `json:"reason,omitempty"`
+	Checkout     string `json:"checkout,omitempty"`
+	Signed       bool   `json:"signed,omitempty"`
+	ValidBefore  int64  `json:"valid_before,omitempty"`
+	Nonce        string `json:"nonce,omitempty"`
+	Payer        string `json:"payer,omitempty"`
+	BalanceCents int64  `json:"balance_cents,omitempty"`
+	BalanceKnown bool   `json:"balance_known,omitempty"`
 }
 
 func legacyMerchantKey(code string) string {
@@ -189,7 +192,7 @@ func merchantAttemptUnusable(item merchantAttempt) bool {
 
 // markAttemptSigned 在带签名的请求发出前把 checkout 和签名标记写入账单。
 // 保存失败时恢复内存，避免下一轮把没发出去的授权当成已经签过。
-func markAttemptSigned(bill *models.Bill, signed procurement.SignedCheckout) error {
+func markAttemptSigned(bill *models.Bill, signed procurement.SignedCheckout, balanceCents int64, balanceKnown bool) error {
 	if bill == nil {
 		return fmt.Errorf("bill is missing")
 	}
@@ -213,6 +216,13 @@ func markAttemptSigned(bill *models.Bill, signed procurement.SignedCheckout) err
 	nonce := strings.TrimSpace(signed.Nonce)
 	if nonce != "" && nonce != "<nil>" {
 		last.Nonce = nonce
+	}
+	if payer := strings.TrimSpace(signed.Payer); payer != "" {
+		last.Payer = payer
+	}
+	if balanceKnown {
+		last.BalanceCents = balanceCents
+		last.BalanceKnown = true
 	}
 	if id := strings.TrimSpace(signed.CheckoutID); id != "" {
 		last.Checkout = id

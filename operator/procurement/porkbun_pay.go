@@ -18,6 +18,7 @@ type SignedCheckout struct {
 	CheckoutID  string
 	ValidBefore int64
 	Nonce       string
+	Payer       string
 }
 
 // CollectInput 是一次域名付款。
@@ -103,11 +104,13 @@ func Collect(ctx context.Context, client *Porkbun, in CollectInput) (Order, erro
 			CheckoutID:  order.CheckoutID,
 			ValidBefore: payment.ValidBefore,
 			Nonce:       payment.Nonce,
+			Payer:       payment.Payer,
 		}); hookErr != nil {
 			return order, hookErr
 		}
 	}
-	signed, err := call(order.CheckoutID, payment.Header)
+	// 签名重试必须和触发 402 的请求体完全相同：payWith:usdc，不带 usdcCheckoutId。
+	signed, err := call("", payment.Header)
 	signed = keepCheckout(signed, order)
 	if err != nil && !paymentInFlight(signed.Code) {
 		return signed, err

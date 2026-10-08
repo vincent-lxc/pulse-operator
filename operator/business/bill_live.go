@@ -20,16 +20,34 @@ import (
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
 )
 
-func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps, error) {
+func porkbunClient(cfg treasury.Config) (*procurement.Porkbun, error) {
 	apiKey, err := treasury.LoadSecret(cfg.Porkbun.APIKeyEnv, cfg.Porkbun.APIKeyFile)
 	if err != nil {
-		return billDeps{}, err
+		return nil, err
 	}
 	secret, err := treasury.LoadSecret(cfg.Porkbun.SecretEnv, cfg.Porkbun.SecretFile)
 	if err != nil {
+		return nil, err
+	}
+	return &procurement.Porkbun{BaseURL: cfg.Porkbun.APIBase, APIKey: apiKey, Secret: secret}, nil
+}
+
+func porkbunBalanceAtSign(ctx context.Context, client *procurement.Porkbun) (int64, bool) {
+	if client == nil {
+		return 0, false
+	}
+	cents, err := client.AccountBalance(ctx)
+	if err != nil {
+		return 0, false
+	}
+	return cents, true
+}
+
+func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps, error) {
+	client, err := porkbunClient(cfg)
+	if err != nil {
 		return billDeps{}, err
 	}
-	client := &procurement.Porkbun{BaseURL: cfg.Porkbun.APIBase, APIKey: apiKey, Secret: secret}
 	deps.quote = func(ctx context.Context, bill *models.Bill) (int64, *big.Int, error) {
 		var order procurement.Order
 		var err error
@@ -303,7 +321,8 @@ func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.
 		CheckoutID: bill.PorkbunCheckoutID, Idempotency: key,
 		Network: network, Asset: asset, Now: time.Now().UTC(), Sign: sign,
 		OnSigned: func(signed procurement.SignedCheckout) error {
-			return markAttemptSigned(bill, signed)
+			cents, known := porkbunBalanceAtSign(ctx, client)
+			return markAttemptSigned(bill, signed, cents, known)
 		},
 	})
 	if finishErr := finishMerchantAttempt(bill, key, order, err); finishErr != nil && err == nil {

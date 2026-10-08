@@ -14,7 +14,7 @@ import (
 
 func runBill(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: pulse bill add|run|list|export|approve|reopen|close|return-float")
+		return fmt.Errorf("usage: pulse bill add|run|list|export|approve|reopen|close|return-float|merchant-reset")
 	}
 	logx.Disable()
 	switch args[0] {
@@ -34,6 +34,8 @@ func runBill(args []string) error {
 		return billClose(args[1:])
 	case "return-float":
 		return billReturn(args[1:])
+	case "merchant-reset":
+		return billMerchantReset(args[1:])
 	default:
 		return fmt.Errorf("unknown bill command %s", args[0])
 	}
@@ -184,6 +186,28 @@ func billExport(args []string) error {
 	fmt.Println(text)
 	fmt.Println(raw)
 	return nil
+}
+
+func billMerchantReset(args []string) error {
+	fs := flag.NewFlagSet("bill merchant-reset", flag.ContinueOnError)
+	configPath := fs.String("config", "config/dry-run.yaml", "operator config")
+	id := fs.String("id", "", "bill id")
+	yes := fs.Bool("yes", false, "confirm a new merchant attempt after the signed authorization has expired unused")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*id) == "" {
+		return fmt.Errorf("bill merchant-reset requires --id")
+	}
+	cfg, err := treasury.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	row, err := business.MerchantReset(context.Background(), cfg, *id, *yes)
+	if row != nil {
+		fmt.Println(business.BillRunLine(row))
+	}
+	return err
 }
 
 func billReturn(args []string) error {

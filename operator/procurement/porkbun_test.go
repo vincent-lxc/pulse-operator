@@ -1,6 +1,7 @@
 package procurement
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -93,7 +95,7 @@ func TestStoredCheckoutDoesNotSignWhenPaymentRequiredAgain(t *testing.T) {
 			t.Errorf("idempotency %q", r.Header.Get("Idempotency-Key"))
 		}
 		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), `"usdcCheckoutId":"chk-1"`) {
+		if !strings.Contains(string(body), `"usdcCheckoutId":"chk-1"`) || !strings.Contains(string(body), `"payWith":"usdc"`) {
 			t.Errorf("body %s", body)
 		}
 		w.Header().Set("PAYMENT-REQUIRED", "again")
@@ -231,6 +233,83 @@ func TestIdempotencyKeyInUseDoesNotSign(t *testing.T) {
 	}
 }
 
+func TestSignedRetryBodyMatchesThe402Request(t *testing.T) {
+	var bodies [][]byte
+	var headers []http.Header
+	required := base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","amount":"2040000","asset":"0x036CbD53842c5426634e7929541eC2318f3dCF7e","payTo":"0x1111111111111111111111111111111111111111","maxTimeoutSeconds":300,"extra":{"name":"USDC","version":"2"}}]}`))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, append([]byte(nil), body...))
+		headers = append(headers, r.Header.Clone())
+		if r.Header.Get("PAYMENT-SIGNATURE") == "" {
+			w.Header().Set("PAYMENT-REQUIRED", required)
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(`{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"SUCCESS","orderId":"ord-9","checkoutId":"chk-1"}`))
+	}))
+	defer srv.Close()
+	client := &Porkbun{BaseURL: srv.URL, APIKey: "pk1_body", Secret: "sk1_body", MinInterval: -1}
+	order, err := Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", Kind: "domain_register", CostCents: 204, Years: 1,
+		Idempotency: "bill-pulse-xyz", Network: "eip155:84532",
+		Asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", Now: time.Unix(1_700_000_000, 0),
+		Sign: func(Accept, time.Time) (Payment, error) {
+			return Payment{Header: "signed-header", ValidBefore: 1_700_000_600, Nonce: "0xabc", Payer: "0x2222222222222222222222222222222222222222"}, nil
+		},
+	})
+	if err != nil || order.OrderID != "ord-9" || len(bodies) != 2 || len(headers) != 2 {
+		t.Fatalf("err=%v order=%+v bodies=%d", err, order, len(bodies))
+	}
+	if !bytes.Equal(bodies[0], bodies[1]) {
+		t.Fatalf("bodies differ\n402: %s\nsigned: %s", bodies[0], bodies[1])
+	}
+	if !bytes.Contains(bodies[0], []byte(`"payWith":"usdc"`)) || bytes.Contains(bodies[0], []byte("usdcCheckoutId")) {
+		t.Fatalf("purchase body %s", bodies[0])
+	}
+	if headers[0].Get("Idempotency-Key") == "" || headers[0].Get("Idempotency-Key") != headers[1].Get("Idempotency-Key") {
+		t.Fatalf("keys %q %q", headers[0].Get("Idempotency-Key"), headers[1].Get("Idempotency-Key"))
+	}
+	if headers[0].Get("Payment-Signature") != "" || headers[1].Get("Payment-Signature") != "signed-header" {
+		t.Fatalf("signature headers %q %q", headers[0].Get("Payment-Signature"), headers[1].Get("Payment-Signature"))
+	}
+	plain, signed := headers[0].Clone(), headers[1].Clone()
+	plain.Del("Payment-Signature")
+	signed.Del("Payment-Signature")
+	if !reflect.DeepEqual(plain, signed) {
+		t.Fatalf("headers differ\n402: %#v\nsigned: %#v", plain, signed)
+	}
+}
+
+func TestPollSendsCheckoutWithPayWith(t *testing.T) {
+	var body []byte
+	var signed string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		signed = r.Header.Get("PAYMENT-SIGNATURE")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"SUCCESS","code":"PAYMENT_PENDING","checkoutId":"chk-1"}`))
+	}))
+	defer srv.Close()
+	client := &Porkbun{BaseURL: srv.URL, APIKey: "pk1_poll", Secret: "sk1_poll", MinInterval: -1}
+	order, err := Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", Kind: "domain_register", CostCents: 204, CheckoutID: "chk-1",
+		Idempotency: "bill-pulse-xyz",
+		Sign: func(Accept, time.Time) (Payment, error) {
+			t.Fatal("signed during poll")
+			return Payment{}, nil
+		},
+	})
+	if err != nil || order.Code != "PAYMENT_PENDING" || signed != "" {
+		t.Fatalf("err=%v order=%+v sig=%q", err, order, signed)
+	}
+	if !bytes.Contains(body, []byte(`"payWith":"usdc"`)) || !bytes.Contains(body, []byte(`"usdcCheckoutId":"chk-1"`)) || !bytes.Contains(body, []byte(`"agreeToTerms":"yes"`)) {
+		t.Fatalf("poll body %s", body)
+	}
+}
+
 func TestPorkbunRateLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"SUCCESS"}`))
@@ -324,10 +403,10 @@ func TestAgreeToTermsOnQuoteAndPurchase(t *testing.T) {
 			} else if strings.Contains(got, `"dryRun"`) || !strings.Contains(got, fmt.Sprintf(`"cost":%d`, tc.cost)) {
 				t.Fatalf("purchase body %s", got)
 			}
-			if tc.checkout != "" && !strings.Contains(got, `"usdcCheckoutId":"`+tc.checkout+`"`) {
+			if tc.checkout != "" && (!strings.Contains(got, `"usdcCheckoutId":"`+tc.checkout+`"`) || !strings.Contains(got, `"payWith":"usdc"`)) {
 				t.Fatalf("checkout body %s", got)
 			}
-			if tc.checkout == "" && !tc.dry && !strings.Contains(got, `"payWith":"usdc"`) {
+			if tc.checkout == "" && !tc.dry && (!strings.Contains(got, `"payWith":"usdc"`) || strings.Contains(got, "usdcCheckoutId")) {
 				t.Fatalf("payWith body %s", got)
 			}
 		})

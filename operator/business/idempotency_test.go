@@ -19,6 +19,15 @@ import (
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
 )
 
+func servePorkbunBalance(w http.ResponseWriter, r *http.Request) bool {
+	if !strings.HasSuffix(r.URL.Path, "/account/balance") {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, `{"status":"SUCCESS","balance":4400}`)
+	return true
+}
+
 func TestMerchantKeyRotatesOnlyAfterADeadAttempt(t *testing.T) {
 	if err := models.EnsureStorage(); err != nil {
 		t.Fatal(err)
@@ -205,6 +214,9 @@ func TestLegacyBillUsesAFreshKeyAndSignsOnce(t *testing.T) {
 	var quotes int
 	header := base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:8453","amount":"8750000","asset":"` + procurement.BaseUSDC + `","payTo":"0x3333333333333333333333333333333333333333","maxTimeoutSeconds":600,"extra":{"name":"USDC","version":"2"}}]}`))
 	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePorkbunBalance(w, r) {
+			return
+		}
 		keys = append(keys, r.Header.Get("Idempotency-Key"))
 		if r.Header.Get("PAYMENT-SIGNATURE") == "" {
 			w.Header().Set("PAYMENT-REQUIRED", header)
@@ -275,6 +287,9 @@ func TestSignedRequestFailureSignsOnce(t *testing.T) {
 			var signatures int
 			code := "bill-signed-" + strings.ReplaceAll(t.Name(), "/", "-")
 			pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePorkbunBalance(w, r) {
+					return
+				}
 				keys = append(keys, r.Header.Get("Idempotency-Key"))
 				raw, _ := io.ReadAll(r.Body)
 				body := string(raw)
@@ -282,7 +297,7 @@ func TestSignedRequestFailureSignsOnce(t *testing.T) {
 				if sig != "" {
 					signatures++
 					stored, err := models.FindBill(code)
-					if err != nil || stored == nil || stored.PorkbunCheckoutID != "chk-1" || !strings.Contains(stored.MerchantAttempts, `"signed":true`) || !strings.Contains(stored.MerchantAttempts, `"valid_before":`) || !strings.Contains(stored.MerchantAttempts, `"nonce":"0x`) {
+					if err != nil || stored == nil || stored.PorkbunCheckoutID != "chk-1" || !strings.Contains(stored.MerchantAttempts, `"signed":true`) || !strings.Contains(stored.MerchantAttempts, `"valid_before":`) || !strings.Contains(stored.MerchantAttempts, `"nonce":"0x`) || !strings.Contains(stored.MerchantAttempts, `"balance_known":true`) || !strings.Contains(stored.MerchantAttempts, `"balance_cents":4400`) {
 						attempts := ""
 						checkout := ""
 						if stored != nil {
@@ -360,6 +375,9 @@ func TestFresh402AfterSignedNeedsReview(t *testing.T) {
 	var keys []string
 	var signatures int
 	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePorkbunBalance(w, r) {
+			return
+		}
 		keys = append(keys, r.Header.Get("Idempotency-Key"))
 		raw, _ := io.ReadAll(r.Body)
 		body := string(raw)
@@ -412,6 +430,9 @@ func TestSignedThenExpiredAllowsOneNewAttempt(t *testing.T) {
 	var signatures int
 	phase := "fail"
 	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePorkbunBalance(w, r) {
+			return
+		}
 		keys = append(keys, r.Header.Get("Idempotency-Key"))
 		raw, _ := io.ReadAll(r.Body)
 		body := string(raw)
@@ -489,6 +510,9 @@ func TestLapsedAuthorizationWithoutPaymentExpiredDoesNotRotate(t *testing.T) {
 	var signatures int
 	var keys []string
 	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePorkbunBalance(w, r) {
+			return
+		}
 		keys = append(keys, r.Header.Get("Idempotency-Key"))
 		raw, _ := io.ReadAll(r.Body)
 		if r.Header.Get("PAYMENT-SIGNATURE") != "" {

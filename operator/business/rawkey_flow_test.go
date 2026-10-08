@@ -367,6 +367,9 @@ func runFakeMainnetBill(t *testing.T, opt fakeBillOpts) (*models.Bill, *models.B
 		procurement.BaseUSDC,
 	)))
 	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePorkbunBalance(w, r) {
+			return
+		}
 		body, _ := io.ReadAll(r.Body)
 		if strings.Contains(string(body), `"dryRun":true`) {
 			_, _ = io.WriteString(w, `{"status":"SUCCESS","cost":204}`)
