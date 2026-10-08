@@ -47,6 +47,7 @@ type Bill struct {
 	X402Required        string `json:"x402_required" desc:"x402 付款要求"`
 	PorkbunCheckoutID   string `json:"porkbun_checkout_id" desc:"Porkbun checkout"`
 	PorkbunOrderID      string `json:"porkbun_order_id" desc:"Porkbun 订单"`
+	MerchantAttempts    string `json:"merchant_attempts" desc:"Porkbun 尝试"`
 	PorkbunBalanceCents int64  `json:"porkbun_balance_cents" desc:"Porkbun 余额（分）"`
 	CircleTxIDs         string `json:"circle_tx_ids" desc:"Circle 交易号"`
 	ArcURL              string `json:"arc_url" desc:"Arc 浏览器"`

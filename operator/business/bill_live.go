@@ -282,13 +282,16 @@ func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.
 		network = "eip155:8453"
 		asset = procurement.BaseUSDC
 	}
+	key, err := prepareMerchantKey(bill)
+	if err != nil {
+		return merchantResult{}, err
+	}
 	// 余额只在第一次签名前检查。已有 checkout 时 USDC 可能已经付给了 Porkbun，重试只轮询。
 	var sign func(procurement.Accept, time.Time) (procurement.Payment, error)
 	if strings.TrimSpace(bill.PorkbunCheckoutID) == "" {
 		if err := requirePayerBalance(ctx, cfg, procurement.CentsToUSDC(bill.QuoteCents)); err != nil {
 			return merchantResult{}, err
 		}
-		var err error
 		sign, err = merchantSigner(cfg)
 		if err != nil {
 			return merchantResult{}, err
@@ -296,18 +299,22 @@ func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.
 	}
 	order, err := procurement.Collect(ctx, client, procurement.CollectInput{
 		Domain: bill.Domain, Kind: bill.Kind, CostCents: bill.QuoteCents, Years: bill.Years,
-		CheckoutID: bill.PorkbunCheckoutID, Idempotency: "bill-" + bill.Code,
+		CheckoutID: bill.PorkbunCheckoutID, Idempotency: key,
 		Network: network, Asset: asset, Now: time.Now().UTC(), Sign: sign,
 	})
-	required := procurement.DecodedPaymentRequired(order.Required)
-	if err != nil {
-		return merchantResult{CheckoutID: order.CheckoutID, Required: required}, err
+	if finishErr := finishMerchantAttempt(bill, key, order, err); finishErr != nil && err == nil {
+		err = finishErr
 	}
-	return merchantResult{
+	required := procurement.DecodedPaymentRequired(order.Required)
+	result := merchantResult{
 		OrderID: order.OrderID, CheckoutID: order.CheckoutID, KeptAsCredit: order.KeptAsCredit,
-		BalanceCents: order.BalanceCents, Required: required,
+		BalanceCents: order.BalanceCents, Required: required, Code: order.Code, Message: order.Message,
 		Pending: order.Code == "PAYMENT_PENDING" || order.Code == "PAYMENT_IN_PROGRESS",
-	}, nil
+	}
+	if err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 func requirePayerBalance(ctx context.Context, cfg treasury.Config, cost *big.Int) error {
