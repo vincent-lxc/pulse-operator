@@ -368,6 +368,9 @@ func (c Config) Validate() error {
 	if c.Mode == "mainnet" && c.ChainID != "5042" {
 		return fmt.Errorf("mainnet mode requires chainID 5042")
 	}
+	if c.Mode == "live" && c.ChainID == "5042" {
+		return fmt.Errorf("mode live cannot target Arc mainnet chain 5042; use mode mainnet")
+	}
 	if c.Mode == "mainnet" && (c.Executor == "circle-wallets" || c.Executor == "circle-agent") {
 		return fmt.Errorf("mainnet rejects executor %s; use raw-key", c.Executor)
 	}

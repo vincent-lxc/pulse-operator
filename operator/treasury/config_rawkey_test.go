@@ -53,6 +53,13 @@ func TestMainnetIrisAndExecutor(t *testing.T) {
 	if _, err := LoadConfig(circleExec); err == nil || !strings.Contains(err.Error(), "circle-wallets") {
 		t.Fatalf("got %v", err)
 	}
+	liveMainnet := filepath.Join(dir, "live-mainnet.yaml")
+	if err := os.WriteFile(liveMainnet, []byte(strings.Replace(base, "mode: mainnet", "mode: live", 1)+"executor: raw-key\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(liveMainnet); err == nil || !strings.Contains(err.Error(), "5042") {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func mustRead(t *testing.T, path string) []byte {

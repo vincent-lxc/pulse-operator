@@ -234,7 +234,8 @@ func (c *LiveChain) Pay(ctx context.Context, call PayCall) (ExecResult, error) {
 	}
 	receipt, err := c.wait(ctx, tx.Hash())
 	if err != nil {
-		return ExecResult{}, c.withRevert(ctx, from, data, err)
+		sent := ExecResult{TxHash: tx.Hash().Hex(), Calldata: "0x" + fmt.Sprintf("%x", data)}
+		return sent, c.withRevert(ctx, from, data, err)
 	}
 	res := ExecResult{TxHash: tx.Hash().Hex(), Calldata: "0x" + fmt.Sprintf("%x", data)}
 	if paid, id, ok := decodePayReceipt(receipt, call.DecisionHash); ok {

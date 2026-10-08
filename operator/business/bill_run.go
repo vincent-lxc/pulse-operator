@@ -216,12 +216,26 @@ func onChainApproval(res vaultResult) bool {
 }
 
 func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, maxFee, amount *big.Int) error {
+	if bill.ReasonCode == "vault_receipt_unknown" && realTxHash(bill.VaultTx) {
+		return fmt.Errorf("vault_receipt_unknown")
+	}
 	needVault := bill.VaultTx == ""
 	if strictVault(deps.cfg.Mode) && !realTxHash(bill.VaultTx) {
 		needVault = true
 	}
 	if needVault {
 		res, err := deps.vault(ctx, bill, amount, bill.DecisionHash)
+		if err != nil && realTxHash(res.TxHash) {
+			bill.VaultTx = res.TxHash
+			bill.ArcURL = explorerArc(deps.policy.ChainID, res.TxHash)
+			bill.State = "failed_vault"
+			bill.ReasonCode = "vault_receipt_unknown"
+			bill.Reason = err.Error()
+			if saveErr := saveProgress(deps, bill); saveErr != nil {
+				return saveErr
+			}
+			return fmt.Errorf("vault_receipt_unknown: %w", err)
+		}
 		if err != nil {
 			bill.State = "failed_vault"
 			if strings.Contains(err.Error(), "DecisionAlreadyUsed") {
@@ -315,6 +329,18 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 			bill.ReasonCode = "awaiting_mint"
 			bill.Reason = "Base USDC is not available to the payer yet"
 			return saveProgress(deps, bill)
+		}
+		if errors.Is(err, procurement.ErrCheckoutNeedsReview) {
+			if paid.CheckoutID != "" {
+				bill.PorkbunCheckoutID = paid.CheckoutID
+			}
+			bill.State = "failed_merchant"
+			bill.ReasonCode = "checkout_needs_review"
+			bill.Reason = "porkbun asked for another x402 signature on an existing checkout"
+			if saveErr := saveProgress(deps, bill); saveErr != nil {
+				return saveErr
+			}
+			return err
 		}
 		if err != nil {
 			bill.State = "failed_merchant"

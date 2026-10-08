@@ -82,6 +82,36 @@ func TestMainnetPayBroadcastGate(t *testing.T) {
 	}
 }
 
+func TestPayKeepsHashWhenReceiptWaitFails(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	srv, hits := newVaultRPC(t, vault, key)
+	defer srv.Close()
+	hits.failReceipt = true
+	t.Setenv("CONFIRM_MAINNET", "1")
+	ctx := context.Background()
+	live, err := DialLive(ctx, LiveOptions{
+		RPC: srv.URL, Mode: "mainnet", Broadcast: true, ChainID: big.NewInt(5042),
+		Vault: vault, Agent: crypto.PubkeyToAddress(key.PublicKey),
+		USDC:     common.HexToAddress("0x3600000000000000000000000000000000000000"),
+		AgentKey: key, GasGwei: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	res, err := live.Pay(ctx, PayCall{
+		Category: "domains", Payee: "0x3333333333333333333333333333333333333333",
+		Amount: big.NewInt(1_000_000), DecisionHash: common.HexToHash("0x01"),
+	})
+	if err == nil || !realHash(res.TxHash) || !containsMethod(hits.methods(), "eth_sendRawTransaction") {
+		t.Fatalf("%+v err %v methods %v", res, err, hits.methods())
+	}
+}
+
 func realHash(tx string) bool {
 	tx = strings.TrimSpace(tx)
 	if len(tx) != 66 || !strings.HasPrefix(tx, "0x") {
@@ -91,9 +121,10 @@ func realHash(tx string) bool {
 }
 
 type rpcHits struct {
-	mu    sync.Mutex
-	seen  []string
-	vault common.Address
+	mu          sync.Mutex
+	seen        []string
+	vault       common.Address
+	failReceipt bool
 }
 
 func (h *rpcHits) add(method string) {
@@ -200,6 +231,10 @@ func newVaultRPC(t *testing.T, vault common.Address, _ *ecdsa.PrivateKey) (*http
 			mu.Unlock()
 			result = hash.Hex()
 		case "eth_getTransactionReceipt":
+			if hits.failReceipt {
+				writeRPCError(w, req.ID, "receipt unavailable")
+				return
+			}
 			var hexHash string
 			_ = json.Unmarshal(req.Params[0], &hexHash)
 			mu.Lock()

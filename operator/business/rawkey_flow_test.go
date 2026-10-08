@@ -140,13 +140,13 @@ func TestMainnetSignerPreflightRefusesBeforeSend(t *testing.T) {
 	t.Setenv("OPERATOR_PRIVATE_KEY", "")
 	t.Setenv("PROCUREMENT_PRIVATE_KEY", "")
 	err = authorizeBills(context.Background(), base, BillFlags{UnderstandRealMoney: true, Yes: true}, 1)
-	if err == nil || !strings.Contains(err.Error(), "OPERATOR_PRIVATE_KEY") || strings.Contains(err.Error(), agentHex) {
+	if err == nil || !strings.Contains(err.Error(), "set OPERATOR_PRIVATE_KEY") || strings.Contains(err.Error(), " or ") || strings.Contains(err.Error(), agentHex) {
 		t.Fatalf("missing agent: %v", err)
 	}
 
 	t.Setenv("OPERATOR_PRIVATE_KEY", agentHex)
 	err = authorizeBills(context.Background(), base, BillFlags{UnderstandRealMoney: true, Yes: true}, 1)
-	if err == nil || !strings.Contains(err.Error(), "PROCUREMENT_PRIVATE_KEY") || strings.Contains(err.Error(), procHex) {
+	if err == nil || !strings.Contains(err.Error(), "set PROCUREMENT_PRIVATE_KEY") || strings.Contains(err.Error(), " or ") || strings.Contains(err.Error(), procHex) {
 		t.Fatalf("missing procurement: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestMainnetSignerPreflightRefusesBeforeSend(t *testing.T) {
 		Mode:        "mainnet",
 		Procurement: treasury.ProcurementConfig{KeyEnv: "PROCUREMENT_PRIVATE_KEY"},
 	}, other, []byte{1}, "x", nil, "idem")
-	if err == nil || !strings.Contains(err.Error(), "PROCUREMENT_PRIVATE_KEY") || walletsClientBuilds.Load() != 0 {
+	if err == nil || !strings.Contains(err.Error(), "set PROCUREMENT_PRIVATE_KEY") || strings.Contains(err.Error(), " or ") || walletsClientBuilds.Load() != 0 {
 		t.Fatalf("send %v builds %d", err, walletsClientBuilds.Load())
 	}
 }

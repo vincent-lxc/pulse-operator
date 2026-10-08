@@ -205,6 +205,21 @@ func authorizeBills(ctx context.Context, cfg treasury.Config, flags BillFlags, c
 	})
 }
 
+func missingKey(who, envName, filePath string) error {
+	envName = strings.TrimSpace(envName)
+	filePath = strings.TrimSpace(filePath)
+	switch {
+	case envName != "" && filePath != "":
+		return fmt.Errorf("%s key missing: set %s or %s", who, envName, filePath)
+	case envName != "":
+		return fmt.Errorf("%s key missing: set %s", who, envName)
+	case filePath != "":
+		return fmt.Errorf("%s key missing: set %s", who, filePath)
+	default:
+		return fmt.Errorf("%s key missing", who)
+	}
+}
+
 func rawKeyMode(cfg treasury.Config) bool {
 	if cfg.Mode == "mainnet" {
 		return true
@@ -222,7 +237,7 @@ func checkLocalSigners(cfg treasury.Config) error {
 		return err
 	}
 	if agentKey == nil {
-		return fmt.Errorf("agent key missing: set %s or %s", cfg.Secrets.AgentKeyEnv, cfg.Secrets.AgentKeyFile)
+		return missingKey("agent", cfg.Secrets.AgentKeyEnv, cfg.Secrets.AgentKeyFile)
 	}
 	agentAddr := crypto.PubkeyToAddress(agentKey.PublicKey)
 	if !common.IsHexAddress(cfg.Agent) || common.HexToAddress(cfg.Agent) != agentAddr {
@@ -233,7 +248,7 @@ func checkLocalSigners(cfg treasury.Config) error {
 		return err
 	}
 	if procKey == nil {
-		return fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+		return missingKey("procurement", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	}
 	procAddr := crypto.PubkeyToAddress(procKey.PublicKey)
 	if !common.IsHexAddress(cfg.Procurement.Address) || common.HexToAddress(cfg.Procurement.Address) != procAddr {
@@ -258,7 +273,7 @@ func checkOnChainSigners(ctx context.Context, cfg treasury.Config, rpc string) e
 		return err
 	}
 	if agentKey == nil {
-		return fmt.Errorf("agent key missing: set %s or %s", cfg.Secrets.AgentKeyEnv, cfg.Secrets.AgentKeyFile)
+		return missingKey("agent", cfg.Secrets.AgentKeyEnv, cfg.Secrets.AgentKeyFile)
 	}
 	agentAddr := crypto.PubkeyToAddress(agentKey.PublicKey)
 	onchain, err := procurement.VaultAgent(ctx, rpc, cfg.Vault)

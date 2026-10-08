@@ -276,18 +276,23 @@ func awaitingForward(wait context.Context, err error) bool {
 }
 
 func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.Porkbun, bill *models.Bill) (merchantResult, error) {
-	if err := requirePayerBalance(ctx, cfg, procurement.CentsToUSDC(bill.QuoteCents)); err != nil {
-		return merchantResult{}, err
-	}
 	network := "eip155:84532"
 	asset := procurement.BaseSepoliaUSDC
 	if cfg.Mode == "mainnet" {
 		network = "eip155:8453"
 		asset = procurement.BaseUSDC
 	}
-	sign, err := merchantSigner(cfg)
-	if err != nil {
-		return merchantResult{}, err
+	// 余额只在第一次签名前检查。已有 checkout 时 USDC 可能已经付给了 Porkbun，重试只轮询。
+	var sign func(procurement.Accept, time.Time) (procurement.Payment, error)
+	if strings.TrimSpace(bill.PorkbunCheckoutID) == "" {
+		if err := requirePayerBalance(ctx, cfg, procurement.CentsToUSDC(bill.QuoteCents)); err != nil {
+			return merchantResult{}, err
+		}
+		var err error
+		sign, err = merchantSigner(cfg)
+		if err != nil {
+			return merchantResult{}, err
+		}
 	}
 	order, err := procurement.Collect(ctx, client, procurement.CollectInput{
 		Domain: bill.Domain, Kind: bill.Kind, CostCents: bill.QuoteCents, Years: bill.Years,
@@ -354,7 +359,7 @@ func merchantSigner(cfg treasury.Config) (func(procurement.Accept, time.Time) (p
 		return nil, err
 	}
 	if key == nil && cfg.Mode == "mainnet" {
-		return nil, fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+		return nil, missingKey("procurement", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	}
 	if key != nil {
 		payer := crypto.PubkeyToAddress(key.PublicKey)
@@ -367,7 +372,7 @@ func merchantSigner(cfg treasury.Config) (func(procurement.Accept, time.Time) (p
 		}, nil
 	}
 	if cfg.Mode == "mainnet" {
-		return nil, fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+		return nil, missingKey("procurement", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	}
 	wallets, err := walletsClient(cfg)
 	if err != nil {
@@ -408,7 +413,7 @@ func sendProcurement(ctx context.Context, cfg treasury.Config, to common.Address
 		return "", "", err
 	}
 	if key == nil && cfg.Mode == "mainnet" {
-		return "", "", fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+		return "", "", missingKey("procurement", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	}
 	if key != nil {
 		chainID, ok := new(big.Int).SetString(cfg.ChainID, 10)
@@ -419,7 +424,7 @@ func sendProcurement(ctx context.Context, cfg treasury.Config, to common.Address
 		return tx, "", err
 	}
 	if cfg.Mode == "mainnet" {
-		return "", "", fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+		return "", "", missingKey("procurement", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	}
 	wallets, err := walletsClient(cfg)
 	if err != nil {

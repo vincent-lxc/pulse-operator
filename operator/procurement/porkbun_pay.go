@@ -3,10 +3,15 @@ package procurement
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"strings"
 	"time"
 )
+
+// ErrCheckoutNeedsReview 表示这个 checkout 已经签过，Porkbun 却又要求一笔新的 x402。
+// 不能再签。需要人核对这笔付款。
+var ErrCheckoutNeedsReview = errors.New("checkout_needs_review")
 
 // CollectInput 是一次域名付款。
 type CollectInput struct {
@@ -52,6 +57,12 @@ func Collect(ctx context.Context, client *Porkbun, in CollectInput) (Order, erro
 			return order, err
 		}
 		return order, nil
+	}
+	if strings.TrimSpace(in.CheckoutID) != "" {
+		if order.CheckoutID == "" {
+			order.CheckoutID = in.CheckoutID
+		}
+		return order, ErrCheckoutNeedsReview
 	}
 	if in.Sign == nil {
 		return order, errString("x402 signer is missing")
