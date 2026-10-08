@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,14 +49,17 @@ type PayPolicy struct {
 }
 
 // Payment 是准备放进 PAYMENT-SIGNATURE 的载荷。
+// ValidBefore 和 Nonce 来自 authorization，给账单留档。签名本身不放在这两个字段里。
 type Payment struct {
-	Header  string
-	Scheme  string
-	Network string
-	Payer   string
-	Amount  string
-	Asset   string
-	PayTo   string
+	Header      string
+	Scheme      string
+	Network     string
+	Payer       string
+	Amount      string
+	Asset       string
+	PayTo       string
+	ValidBefore int64
+	Nonce       string
 }
 
 // ParsePaymentRequired 解开 header。支持标准 base64 和 base64url，也接受已经是 JSON 的值。
@@ -266,15 +270,59 @@ func packPayment(item Accept, payer common.Address, payload map[string]any, extr
 	if err != nil {
 		return Payment{}, err
 	}
+	validBefore, nonce := authorizationMeta(payload)
 	return Payment{
-		Header:  base64.StdEncoding.EncodeToString(raw),
-		Scheme:  item.Scheme,
-		Network: item.Network,
-		Payer:   payer.Hex(),
-		Amount:  item.Amount,
-		Asset:   common.HexToAddress(item.Asset).Hex(),
-		PayTo:   common.HexToAddress(item.PayTo).Hex(),
+		Header:      base64.StdEncoding.EncodeToString(raw),
+		Scheme:      item.Scheme,
+		Network:     item.Network,
+		Payer:       payer.Hex(),
+		Amount:      item.Amount,
+		Asset:       common.HexToAddress(item.Asset).Hex(),
+		PayTo:       common.HexToAddress(item.PayTo).Hex(),
+		ValidBefore: validBefore,
+		Nonce:       nonce,
 	}, nil
+}
+
+func authorizationMeta(payload map[string]any) (int64, string) {
+	auth, _ := payload["authorization"].(map[string]any)
+	if auth == nil {
+		return 0, ""
+	}
+	return unixField(auth["validBefore"]), nonceField(auth["nonce"])
+}
+
+func unixField(v any) int64 {
+	switch n := v.(type) {
+	case string:
+		i, err := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return i
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case float64:
+		return int64(n)
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0
+		}
+		return i
+	default:
+		return 0
+	}
+}
+
+func nonceField(v any) string {
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
 }
 
 func signEIP3009(key *ecdsa.PrivateKey, primary, name, version string, chainID int64, asset string, auth map[string]any) ([]byte, error) {

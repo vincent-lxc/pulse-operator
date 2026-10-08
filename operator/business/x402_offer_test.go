@@ -49,9 +49,11 @@ func TestMerchantFailureKeepsOfferAndReason(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var posts, signatures, vaults, burns int
+			var keys []string
 			header := base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[` + tc.accepts + `]}`))
 			pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				posts++
+				keys = append(keys, r.Header.Get("Idempotency-Key"))
 				if r.Header.Get("PAYMENT-SIGNATURE") != "" {
 					signatures++
 				}
@@ -130,6 +132,10 @@ func TestMerchantFailureKeepsOfferAndReason(t *testing.T) {
 			}
 			if err = AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != tc.wantCode || vaults != 0 || burns != 0 || posts != 2 || signatures != 0 {
 				t.Fatalf("retry code=%s posts=%d sig=%d vaults=%d burns=%d err=%v", bill.ReasonCode, posts, signatures, vaults, burns, err)
+			}
+			wantKey := merchantAttemptKey(bill.Code, 1)
+			if len(keys) != 2 || keys[0] != wantKey || keys[1] != wantKey {
+				t.Fatalf("keys %v", keys)
 			}
 		})
 	}
