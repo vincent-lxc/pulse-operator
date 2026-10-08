@@ -50,6 +50,8 @@ type Config struct {
 	CCTP               BridgeConfig      `yaml:"cctpBridge"`
 	BillsFile          string            `yaml:"billsFile"`
 	MaxBillUSDC        string            `yaml:"maxBillUSDC"`
+	// MinGasUSDC 是 agent 和采购钱包在 Arc 上的原生余额下限。空值按 0.05。Arc gas 用 USDC 支付。
+	MinGasUSDC string `yaml:"minGasUSDC"`
 	// AcknowledgeExposedAdminView 确认操作者知道管理界面监听所有网卡，且框架 testtoken 会向局域网签发管理员 token。
 	// 主网在 -view 不是 0 时，没有这项或 OPERATOR_ACK_EXPOSED_VIEW=1 就拒绝启动。
 	AcknowledgeExposedAdminView bool `yaml:"acknowledgeExposedAdminView"`
@@ -109,6 +111,10 @@ type BridgeConfig struct {
 	TokenMessenger  string `yaml:"tokenMessenger"`
 	BaseMessenger   string `yaml:"baseMessenger"`
 	BaseTransmitter string `yaml:"baseTransmitter"`
+	// IrisBase 是 Circle Iris 的公开地址。circle.irisBase 仍可作为别名。
+	IrisBase string `yaml:"irisBase"`
+	// PollTimeout 是等转发铸币的最长时间。空值是 3 分钟。
+	PollTimeout time.Duration `yaml:"pollTimeout"`
 }
 
 // CircleConfig 选择 Circle 产品。值里只有环境变量名和文件路径，没有密钥。
@@ -225,8 +231,19 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Circle.APIBase == "" {
 		cfg.Circle.APIBase = "https://api.circle.com"
 	}
-	if cfg.Circle.IrisBase == "" {
-		cfg.Circle.IrisBase = "https://iris-api-sandbox.circle.com"
+	if cfg.CCTP.IrisBase == "" {
+		cfg.CCTP.IrisBase = cfg.Circle.IrisBase
+	}
+	if cfg.CCTP.IrisBase == "" {
+		if cfg.Mode == "mainnet" {
+			cfg.CCTP.IrisBase = "https://iris-api.circle.com"
+		} else {
+			cfg.CCTP.IrisBase = "https://iris-api-sandbox.circle.com"
+		}
+	}
+	cfg.Circle.IrisBase = cfg.CCTP.IrisBase
+	if cfg.CCTP.PollTimeout <= 0 {
+		cfg.CCTP.PollTimeout = 3 * time.Minute
 	}
 	if cfg.Circle.CLI == "" {
 		cfg.Circle.CLI = "circle"
@@ -351,6 +368,12 @@ func (c Config) Validate() error {
 	if c.Mode == "mainnet" && c.ChainID != "5042" {
 		return fmt.Errorf("mainnet mode requires chainID 5042")
 	}
+	if c.Mode == "mainnet" && (c.Executor == "circle-wallets" || c.Executor == "circle-agent") {
+		return fmt.Errorf("mainnet rejects executor %s; use raw-key", c.Executor)
+	}
+	if c.Mode == "mainnet" && strings.Contains(strings.ToLower(c.IrisAPI()), "sandbox") {
+		return fmt.Errorf("mainnet rejects a sandbox iris url")
+	}
 	if c.Mode == "testnet" && c.ChainID != "5042002" {
 		return fmt.Errorf("testnet mode requires chainID 5042002")
 	}
@@ -471,6 +494,22 @@ func BlockchainForBase(chainID, mode string) string {
 		return "BASE"
 	}
 	return "BASE-SEPOLIA"
+}
+
+// IrisAPI 返回费用和消息查询用的 Iris 根地址。cctpBridge.irisBase 优先于 circle.irisBase。
+func (c Config) IrisAPI() string {
+	base := strings.TrimSpace(c.CCTP.IrisBase)
+	if base == "" {
+		base = strings.TrimSpace(c.Circle.IrisBase)
+	}
+	base = strings.TrimRight(base, "/")
+	if base != "" {
+		return base
+	}
+	if c.Mode == "mainnet" {
+		return "https://iris-api.circle.com"
+	}
+	return "https://iris-api-sandbox.circle.com"
 }
 
 // ForwardCCTP 在没有打开标准转账回退时使用 Forwarding Service。

@@ -21,7 +21,9 @@ acknowledgeExposedAdminView: false
 loopEnabled: false
 maxSpendPerRunUSDC: "15"
 maxBillUSDC: "15"
-executor: circle-wallets
+# Native Arc balance floor for the agent and the procurement wallet. Empty means 0.05.
+# minGasUSDC: "0.05"
+executor: raw-key
 planner:
   driver: gateway
   model: openai/gpt-5.4-nano
@@ -43,9 +45,9 @@ porkbun:
   feeBufferUSDC: "0.02"
 procurement:
   address: "0x0000000000000000000000000000000000000000"
-  walletIDEnv: CIRCLE_PROCUREMENT_WALLET_ID
-  baseWalletIDEnv: CIRCLE_PROCUREMENT_BASE_WALLET_ID
+  # Leave baseAddress empty. This key is the same EOA on Arc and on Base.
   keyEnv: PROCUREMENT_PRIVATE_KEY
+  # keyFile: /home/operator/keys/procurement.secret.json
 base:
   chainID: "8453"
   rpcEnv: BASE_RPC_URL
@@ -57,19 +59,14 @@ cctpBridge:
   sourceDomain: 26
   destDomain: 6
   tokenMessenger: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d"
+  irisBase: https://iris-api.circle.com
+  # pollTimeout: 3m
+  # circle.irisBase is still accepted as an alias. A sandbox URL is rejected on mainnet.
 secrets:
   rpcEnv: ARC_RPC_URL
   agentKeyEnv: OPERATOR_PRIVATE_KEY
+  # agentKeyFile: /home/operator/keys/agent.secret.json
   ownerKeyEnv: OWNER_PRIVATE_KEY
 gas:
   maxFeePerGasGwei: 50
   maxPriorityFeePerGasGwei: 2
-circle:
-  blockchain: ARC
-  apiBase: https://api.circle.com
-  irisBase: https://iris-api.circle.com
-  apiKeyEnv: CIRCLE_API_KEY
-  entitySecretEnv: CIRCLE_ENTITY_SECRET
-  walletIDEnv: CIRCLE_WALLET_ID
-  ownerWalletIDEnv: CIRCLE_OWNER_WALLET_ID
-  feeLevel: MEDIUM

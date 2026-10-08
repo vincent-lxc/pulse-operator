@@ -26,6 +26,7 @@ import (
 type LiveChain struct {
 	eth        *ethclient.Client
 	mode       string
+	broadcast  bool
 	chainID    *big.Int
 	vault      common.Address
 	agent      common.Address
@@ -42,9 +43,12 @@ type LiveChain struct {
 }
 
 // LiveOptions 是 DialLive 的参数。密钥可以为空：dry-run 只读不需要它们。
+// Broadcast 只在本进程已经通过账单闸门之后由账单付款路径设为 true。
+// 观察、循环、runonce 和管理接口保持 false，主网上仍然只做 eth_call。
 type LiveOptions struct {
 	RPC        string
 	Mode       string
+	Broadcast  bool
 	ChainID    *big.Int
 	Vault      common.Address
 	Agent      common.Address
@@ -84,6 +88,7 @@ func DialLive(ctx context.Context, opt LiveOptions) (*LiveChain, error) {
 	return &LiveChain{
 		eth:        eth,
 		mode:       opt.Mode,
+		broadcast:  opt.Broadcast,
 		chainID:    id,
 		vault:      opt.Vault,
 		agent:      opt.Agent,
@@ -207,13 +212,13 @@ func (c *LiveChain) Observe(ctx context.Context) (Snapshot, error) {
 	return snap, nil
 }
 
-// Pay 在 live 模式下发送交易；dry-run 只做 eth_call。
+// Pay 只在 broadcasts 为真时发送交易。其他情况只做 eth_call。
 func (c *LiveChain) Pay(ctx context.Context, call PayCall) (ExecResult, error) {
 	data, err := PackPay(call.Category, call.Payee, call.Amount, call.DecisionHash)
 	if err != nil {
 		return ExecResult{}, err
 	}
-	if c.mode != "live" {
+	if !c.broadcasts() {
 		return c.simulatePay(ctx, data)
 	}
 	if c.agentKey == nil {
@@ -250,7 +255,7 @@ func (c *LiveChain) Sweep(ctx context.Context, call SweepCall) (ExecResult, erro
 	if err != nil {
 		return ExecResult{}, err
 	}
-	if c.mode != "live" {
+	if !c.broadcasts() {
 		return c.simulate(ctx, "sweepToReserve", data, "dry_run")
 	}
 	if c.ownerKey == nil {
@@ -285,7 +290,7 @@ func (c *LiveChain) ownerAction(ctx context.Context, requestID, method, liveStat
 	if err != nil {
 		return ExecResult{}, err
 	}
-	if c.mode != "live" {
+	if !c.broadcasts() {
 		res, err := c.simulate(ctx, method, data, dryStatus)
 		res.RequestID = strings.TrimSpace(requestID)
 		return res, err
@@ -305,6 +310,15 @@ func (c *LiveChain) ownerAction(ctx context.Context, requestID, method, liveStat
 		return ExecResult{}, c.withRevert(ctx, from, data, err)
 	}
 	return ExecResult{Status: liveStatus, TxHash: tx.Hash().Hex(), RequestID: strings.TrimSpace(requestID), Calldata: "0x" + fmt.Sprintf("%x", data)}, nil
+}
+
+// broadcasts 为真时才会签名发送。mode live 保持原样。
+// testnet 和 mainnet 必须同时带上本进程的 Broadcast，避免观察路径把模拟当成付款。
+func (c *LiveChain) broadcasts() bool {
+	if c.mode == "live" {
+		return true
+	}
+	return c.broadcast && (c.mode == "testnet" || c.mode == "mainnet")
 }
 
 func (c *LiveChain) guardMainnet() error {

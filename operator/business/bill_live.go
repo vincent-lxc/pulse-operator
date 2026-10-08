@@ -3,6 +3,7 @@ package business
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -57,7 +58,7 @@ func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps
 	deps.vault = func(ctx context.Context, bill *models.Bill, amount *big.Int, hash string) (vaultResult, error) {
 		chain, closeChain, err := openChain(ctx, cfg, []treasury.Payable{{
 			ID: bill.Code, Category: bill.CategoryCode, Payee: deps.payee, Amount: amount, Due: time.Now().UTC(), Status: "pending",
-		}})
+		}}, broadcastVault())
 		if err != nil {
 			return vaultResult{}, err
 		}
@@ -68,7 +69,8 @@ func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps
 		}
 		res, err := chain.Pay(ctx, treasury.PayCall{Category: bill.CategoryCode, Payee: deps.payee, Amount: amount, DecisionHash: callHash})
 		status := res.Status
-		if strings.Contains(status, "approval") || (res.RequestID != "" && !strings.Contains(status, "paid")) {
+		simulated := strings.HasPrefix(status, "dry_run") || strings.HasPrefix(status, "simulated")
+		if !simulated && (strings.Contains(status, "approval") || (res.RequestID != "" && !strings.Contains(status, "paid"))) {
 			status = "approval"
 		}
 		return vaultResult{TxHash: res.TxHash, RequestID: res.RequestID, Status: status}, err
@@ -89,11 +91,7 @@ func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps
 }
 
 func quoteForwardFee(ctx context.Context, cfg treasury.Config, needed *big.Int) (*big.Int, error) {
-	iris := cfg.Circle.IrisBase
-	if iris == "" {
-		iris = "https://iris-api.circle.com"
-	}
-	raw, err := httpGet(ctx, procurement.FeeURL(iris, cfg.CCTP.SourceDomain, cfg.CCTP.DestDomain, cfg.ForwardCCTP()))
+	raw, err := httpGet(ctx, procurement.FeeURL(cfg.IrisAPI(), cfg.CCTP.SourceDomain, cfg.CCTP.DestDomain, cfg.ForwardCCTP()))
 	if err != nil {
 		return nil, err
 	}
@@ -158,9 +156,17 @@ var pollBurnMessages = pollIris
 
 func liveBurn(ctx context.Context, cfg treasury.Config, bill *models.Bill, cost, maxFee *big.Int, save func(string) error) (burnResult, error) {
 	if bill.CCTPBurnTx != "" {
-		msg, err := pollBurnMessages(ctx, cfg, bill.CCTPBurnTx)
+		wait, cancel := context.WithTimeout(ctx, burnWait(cfg))
+		defer cancel()
+		msg, err := pollBurnMessages(wait, cfg, bill.CCTPBurnTx)
 		if err != nil {
-			return burnResult{BurnTx: bill.CCTPBurnTx}, err
+			if cfg.ForwardCCTP() && awaitingForward(wait, err) {
+				return burnResult{BurnTx: bill.CCTPBurnTx, ForwardFee: maxFee.String()}, fmt.Errorf("%w", errAwaitingMint)
+			}
+			return burnResult{BurnTx: bill.CCTPBurnTx, ForwardFee: maxFee.String()}, err
+		}
+		if cfg.ForwardCCTP() && strings.TrimSpace(msg.ForwardTxHash) == "" {
+			return burnResult{BurnTx: bill.CCTPBurnTx, MessageHash: msg.Message, Nonce: msg.EventNonce, ForwardFee: maxFee.String()}, fmt.Errorf("%w", errAwaitingMint)
 		}
 		return burnResult{BurnTx: bill.CCTPBurnTx, MintTx: msg.ForwardTxHash, MessageHash: msg.Message, Nonce: msg.EventNonce, ForwardFee: maxFee.String()}, nil
 	}
@@ -230,13 +236,19 @@ func commitBurn(ctx context.Context, cfg treasury.Config, burnTx, circleID strin
 			return burnResult{BurnTx: burnTx, ForwardFee: fee.String(), CircleTxID: circleID}, err
 		}
 	}
-	wait, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	wait, cancel := context.WithTimeout(ctx, burnWait(cfg))
 	defer cancel()
 	msg, err := pollBurnMessages(wait, cfg, burnTx)
 	if err != nil {
+		if cfg.ForwardCCTP() && errors.Is(wait.Err(), context.DeadlineExceeded) {
+			return burnResult{BurnTx: burnTx, ForwardFee: fee.String(), CircleTxID: circleID}, fmt.Errorf("%w", errAwaitingMint)
+		}
 		return burnResult{BurnTx: burnTx, ForwardFee: fee.String(), CircleTxID: circleID}, err
 	}
 	mint := msg.ForwardTxHash
+	if cfg.ForwardCCTP() && strings.TrimSpace(mint) == "" {
+		return burnResult{BurnTx: burnTx, MessageHash: msg.Message, Nonce: msg.EventNonce, ForwardFee: fee.String(), CircleTxID: circleID}, fmt.Errorf("%w", errAwaitingMint)
+	}
 	if mint == "" && !cfg.ForwardCCTP() {
 		mint, err = receiveOnBase(ctx, cfg, msg)
 		if err != nil {
@@ -246,7 +258,27 @@ func commitBurn(ctx context.Context, cfg treasury.Config, burnTx, circleID strin
 	return burnResult{BurnTx: burnTx, MintTx: mint, MessageHash: msg.Message, Nonce: msg.EventNonce, ForwardFee: fee.String(), CircleTxID: circleID}, nil
 }
 
+// errAwaitingMint 表示 burn 已经记下，Base 上的 USDC 还不能付。重试只轮询，不再 burn。
+var errAwaitingMint = errors.New("awaiting_mint")
+
+func burnWait(cfg treasury.Config) time.Duration {
+	if cfg.CCTP.PollTimeout > 0 {
+		return cfg.CCTP.PollTimeout
+	}
+	return 3 * time.Minute
+}
+
+func awaitingForward(wait context.Context, err error) bool {
+	if errors.Is(wait.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return err != nil && strings.Contains(err.Error(), "forwarded mint is not ready")
+}
+
 func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.Porkbun, bill *models.Bill) (merchantResult, error) {
+	if err := requirePayerBalance(ctx, cfg, procurement.CentsToUSDC(bill.QuoteCents)); err != nil {
+		return merchantResult{}, err
+	}
 	network := "eip155:84532"
 	asset := procurement.BaseSepoliaUSDC
 	if cfg.Mode == "mainnet" {
@@ -271,15 +303,71 @@ func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.
 	}, nil
 }
 
+func requirePayerBalance(ctx context.Context, cfg treasury.Config, cost *big.Int) error {
+	if cost == nil || cost.Sign() <= 0 {
+		return fmt.Errorf("bill cost is missing")
+	}
+	env := cfg.Base.RPCEnv
+	if env == "" {
+		env = "BASE_RPC_URL"
+	}
+	rpc := os.Getenv(env)
+	if rpc == "" {
+		return fmt.Errorf("base rpc missing: set %s", env)
+	}
+	token := cfg.Base.USDC
+	if !common.IsHexAddress(token) {
+		if cfg.Mode == "mainnet" {
+			token = procurement.BaseUSDC
+		} else {
+			token = procurement.BaseSepoliaUSDC
+		}
+	}
+	payer := configuredPayer(cfg)
+	if payer == (common.Address{}) {
+		return fmt.Errorf("base payer address is missing")
+	}
+	bal, err := procurement.TokenBalance(ctx, rpc, token, payer.Hex())
+	if err != nil {
+		return fmt.Errorf("%w: Base USDC balance could not be read", errAwaitingMint)
+	}
+	if bal.Cmp(cost) < 0 {
+		return fmt.Errorf("%w: Base USDC balance is below the bill cost", errAwaitingMint)
+	}
+	return nil
+}
+
+func configuredPayer(cfg treasury.Config) common.Address {
+	raw := strings.TrimSpace(cfg.Procurement.BaseAddress)
+	if raw == "" {
+		raw = cfg.Procurement.Address
+	}
+	if !common.IsHexAddress(raw) {
+		return common.Address{}
+	}
+	return common.HexToAddress(raw)
+}
+
 func merchantSigner(cfg treasury.Config) (func(procurement.Accept, time.Time) (procurement.Payment, error), error) {
 	key, err := treasury.LoadPrivateKey(cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	if err != nil {
 		return nil, err
 	}
+	if key == nil && cfg.Mode == "mainnet" {
+		return nil, fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+	}
 	if key != nil {
+		payer := crypto.PubkeyToAddress(key.PublicKey)
+		want := configuredPayer(cfg)
+		if want == (common.Address{}) || payer != want {
+			return nil, fmt.Errorf("procurement signer %s does not match configured payer %s", payer.Hex(), want.Hex())
+		}
 		return func(item procurement.Accept, now time.Time) (procurement.Payment, error) {
 			return procurement.SignPayment(key, item, now)
 		}, nil
+	}
+	if cfg.Mode == "mainnet" {
+		return nil, fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	}
 	wallets, err := walletsClient(cfg)
 	if err != nil {
@@ -319,6 +407,9 @@ func sendProcurement(ctx context.Context, cfg treasury.Config, to common.Address
 	if err != nil {
 		return "", "", err
 	}
+	if key == nil && cfg.Mode == "mainnet" {
+		return "", "", fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+	}
 	if key != nil {
 		chainID, ok := new(big.Int).SetString(cfg.ChainID, 10)
 		if !ok {
@@ -326,6 +417,9 @@ func sendProcurement(ctx context.Context, cfg treasury.Config, to common.Address
 		}
 		tx, err := procurement.SendCall(ctx, os.Getenv(cfg.Secrets.RPCEnv), chainID, key, to, data)
 		return tx, "", err
+	}
+	if cfg.Mode == "mainnet" {
+		return "", "", fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	}
 	wallets, err := walletsClient(cfg)
 	if err != nil {
@@ -351,12 +445,15 @@ func sendProcurement(ctx context.Context, cfg treasury.Config, to common.Address
 	return tx.TxHash, tx.ID, nil
 }
 
-func pollIris(ctx context.Context, cfg treasury.Config, burnTx string) (procurement.Message, error) {
-	iris := cfg.Circle.IrisBase
-	if iris == "" {
-		iris = "https://iris-api.circle.com"
+func irisReady(cfg treasury.Config, msg procurement.Message) bool {
+	if strings.TrimSpace(msg.ForwardTxHash) != "" {
+		return true
 	}
-	url := procurement.MessagesURL(iris, cfg.CCTP.SourceDomain, burnTx)
+	return !cfg.ForwardCCTP() && strings.EqualFold(msg.Status, "complete")
+}
+
+func pollIris(ctx context.Context, cfg treasury.Config, burnTx string) (procurement.Message, error) {
+	url := procurement.MessagesURL(cfg.IrisAPI(), cfg.CCTP.SourceDomain, burnTx)
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	var last error
@@ -364,10 +461,14 @@ func pollIris(ctx context.Context, cfg treasury.Config, burnTx string) (procurem
 		raw, err := httpGet(ctx, url)
 		if err == nil {
 			msg, err := procurement.ParseIrisMessages(raw)
-			if err == nil && (msg.ForwardTxHash != "" || strings.EqualFold(msg.Status, "complete")) {
+			if err == nil && irisReady(cfg, msg) {
 				return msg, nil
 			}
-			last = err
+			if err == nil && cfg.ForwardCCTP() {
+				last = fmt.Errorf("forwarded mint is not ready")
+			} else {
+				last = err
+			}
 		} else {
 			last = err
 		}

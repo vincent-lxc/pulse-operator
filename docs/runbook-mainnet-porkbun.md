@@ -11,7 +11,7 @@ Default mode is `dry-run`. A mainnet payment needs every gate below at the same 
 
 The model may only pick an action the Go rules already allow (`pay`, `defer`, `escalate`, `reject`). It cannot raise a cap, add a payee, or spend past a budget. A disagreement is written to the audit as `planner_disagree`. Invalid JSON, a timeout, or a transport error becomes `escalate` and does **not** submit a transferring `pay`.
 
-A bill whose amount is above the vault balance escalates with `insufficient_balance` and does not call the vault. Dry-run subtracts what this process has already committed to pay from the fixture balance and the domains remaining budget, so a later bill in the same run sees the lower figures. The fixture does not change on disk: a new `bill run` or `bill approve` process starts from those numbers again. On testnet and mainnet, a failed read of the balance, category, payee allowlist, or caps escalates with `observe_failed`. The bill is not treated as enabled, allowlisted, or uncapped, and the vault is not called. A live read subtracts only spend committed in this process that the chain balance does not already include (a vault approval, or a pay that has not transferred). A status of `paid`, `simulated_paid`, `dry_run_paid`, or `circle_confirmed` drops that amount from the pending total, because the next observation already shows the debit.
+A bill whose amount is above the vault balance escalates with `insufficient_balance` and does not call the vault. Dry-run subtracts what this process has already committed to pay from the fixture balance and the domains remaining budget, so a later bill in the same run sees the lower figures. The fixture does not change on disk: a new `bill run` or `bill approve` process starts from those numbers again. On testnet and mainnet, a failed read of the balance, category, payee allowlist, or caps escalates with `observe_failed`. The bill is not treated as enabled, allowlisted, or uncapped, and the vault is not called. A live read subtracts only spend committed in this process that the chain balance does not already include (a vault approval, or a pay that has not transferred). In dry-run, a status of `paid`, `simulated_paid`, `dry_run_paid`, or `circle_confirmed` drops that amount from the pending total. On testnet, live, and mainnet, a bill drops it only after status `paid` and a real `0x` 32-byte transaction hash. A `dry_run_*` or `simulated_*` status, or an empty hash, sets the bill to `failed_vault` with reason code `vault_not_broadcast`, leaves that pending amount in place, and does not burn or pay the merchant.
 
 PolicyVault still enforces the category budget, per-transaction cap, payee allowlist, pause, and one-time `decisionHash` on chain. An in-policy `pay` transfers. An over-cap `pay` only opens an `ApprovalRequest` when the owner set over-limit mode to Escalate.
 
@@ -61,15 +61,25 @@ The operator's daily cap defaults to 10 checkouts. That is **our** limit. The Po
 
    That sets category `domains` (30 USDC / 14 days, 15 USDC per transaction), allowlists only the procurement wallet, sets over-limit mode to Escalate, and sets the agent when it differs. `pendingCount()` is the code check; a non-vault reverts.
 
-4. Fund the vault with USDC (6 decimals). Fund the agent signer and the procurement wallet with native USDC for Arc gas.
+4. Fund the vault with USDC (6 decimals). Fund the agent signer and the procurement wallet with native USDC for Arc gas. Arc gas is the native balance (`eth_getBalance`, 18 decimals), not the ERC-20 balance. The bill preflight refuses when either native balance is below `minGasUSDC` (default 0.05).
 
-5. Create a Circle **live** API key and entity secret. A testnet wallet set cannot transact on ARC mainnet. Use one developer-controlled wallet with blockchains ARC and BASE so the address matches, or set `procurement.baseAddress` to an address that the same signer controls. The operator refuses a Base address it cannot prove it controls.
+5. Three local keys. Mainnet does not use a Circle API key, entity secret, or wallet id. Iris (fees and messages) is a public API.
+
+   - **Owner.** The forge scripts use `PRIVATE_KEY`. The operator reads `OWNER_PRIVATE_KEY` only for sweep, approve, and reject. On mainnet those admin paths stay simulate-only.
+   - **Agent.** `OPERATOR_PRIVATE_KEY` or `secrets.agentKeyFile`. This key signs `PolicyVault.pay`. Its address must equal `agent` and the on-chain `PolicyVault.agent()`.
+   - **Procurement and Base payer.** One key: `PROCUREMENT_PRIVATE_KEY` or `procurement.keyFile`. The same EOA is the Arc procurement wallet and the Base x402 payer. Leave `procurement.baseAddress` empty. Base needs USDC and no ETH. Forwarding pays the Base gas out of the CCTP fee.
+
+   A key file is mode 0600. It may be raw hex, or JSON `{"address","private_key"}`. If `address` is present it must match the key. Do not commit the files.
 
 6. Register a verified Porkbun account (email and phone), create a **live** API key, and raise the monthly API limit if the bills need it. Sandbox keys cannot pay with USDC.
 
-7. Export `CONFIRM_MAINNET=1`, `AI_GATEWAY_API_KEY` (or keep `planner.driver: rules`), `PORKBUN_API_KEY`, `PORKBUN_SECRET_API_KEY`, `ARC_RPC_URL`, `BASE_RPC_URL`, Circle or `PROCUREMENT_PRIVATE_KEY` / `OPERATOR_PRIVATE_KEY`. Put key files at mode 0600. Do not commit them.
+7. Export `CONFIRM_MAINNET=1`, `AI_GATEWAY_API_KEY` (or keep `planner.driver: rules`), `PORKBUN_API_KEY`, `PORKBUN_SECRET_API_KEY`, `ARC_RPC_URL`, `BASE_RPC_URL`, `OPERATOR_PRIVATE_KEY`, and `PROCUREMENT_PRIVATE_KEY`. Do not set `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, or a Circle wallet id.
 
-8. Set `maxSpendPerRunUSDC` and `maxBillUSDC`. Mainnet refuses to run without both. Those caps are also enforced on each bill: one bill over `maxBillUSDC`, or a run whose bills would pass `maxSpendPerRunUSDC`, escalates and does not transfer. Porkbun keys may be env vars or mode-0600 files (`apiKeyFile`, `secretFile`). `--years` must be 1; Porkbun charges the minimum term, so a multiplied quote would not match the charge. A register and a renewal of the same domain are `bill-register-<name>` and `bill-renew-<name>`. x402 typed data is signed with the Base wallet (`CIRCLE_PROCUREMENT_BASE_WALLET_ID`) and rejected unless the recovered signer is the payer.
+8. Set `maxSpendPerRunUSDC` and `maxBillUSDC`. Mainnet refuses to run without both. Those caps are also enforced on each bill: one bill over `maxBillUSDC`, or a run whose bills would pass `maxSpendPerRunUSDC`, escalates and does not transfer. Porkbun keys may be env vars or mode-0600 files (`apiKeyFile`, `secretFile`). `--years` must be 1; Porkbun charges the minimum term, so a multiplied quote would not match the charge. A register and a renewal of the same domain are `bill-register-<name>` and `bill-renew-<name>`. Before any payment client is built, preflight checks the agent key, the procurement key, `PolicyVault.agent()`, and the native gas balances. x402 is signed with the procurement key and refused when that key is not the configured payer. A missing key on mainnet fails closed and names the env var or file. It does not fall back to Circle.
+
+`cctpBridge.irisBase` defaults to `https://iris-api.circle.com` on mainnet and the sandbox on every other mode. `circle.irisBase` is still accepted as an alias. Mainnet rejects a sandbox Iris URL and rejects `executor: circle-wallets` or `circle-agent`.
+
+The operator loop, `runonce`, the admin routes, and the Approvals page keep `Broadcast: false`. On mainnet they still only simulate. `bill run` and `bill approve` set `Broadcast: true` only after `authorizeBills` and the mainnet gate have passed, in that same process. `CONFIRM_MAINNET=1` is still required before a send on chain 5042.
 
 ## Commands
 
@@ -123,12 +133,13 @@ Several bills in one process require `--auto` together with the spend caps. `--y
 
 ## Idempotency
 
-The decision hash is stored before `PolicyVault.pay`. A retry of a `decided` bill reuses it. `DecisionAlreadyUsed` marks the bill `failed_vault` and does not mint another hash. The burn transaction hash is saved as soon as it is broadcast, before Iris is polled; a retry that already has `CCTPBurnTx` only polls. A model `reject` of a bill the rules still allow becomes `escalate` (the bill stays open for a person) and the stored `risk_notes` are exactly the notes inside `decisionHash`. A Porkbun `PAYMENT_IN_PROGRESS` or `PAYMENT_PENDING` does not sign another x402 payload. If registration fails after the transfer, the money stays as Porkbun credit (`kept_as_credit`); retry that bill without `payWith`.
+The decision hash is stored before `PolicyVault.pay`. A retry of a `decided` bill reuses it. `DecisionAlreadyUsed` marks the bill `failed_vault` and does not mint another hash. The burn transaction hash is saved as soon as it is broadcast, before Iris is polled; a retry that already has `CCTPBurnTx` only polls. With forwarding on, the burn counts as bridged only after Iris sets `forwardTxHash`. The operator then reads Base USDC `balanceOf(payer)` and continues only when that balance is at least the bill cost. If either is still missing when the poll timeout ends (default 3 minutes, `cctpBridge.pollTimeout`), the bill stays `bridged` with reason code `awaiting_mint`. That retry polls and does not burn again, and it does not sign x402. A model `reject` of a bill the rules still allow becomes `escalate` (the bill stays open for a person) and the stored `risk_notes` are exactly the notes inside `decisionHash`. A Porkbun `PAYMENT_IN_PROGRESS` or `PAYMENT_PENDING` does not sign another x402 payload. If registration fails after the transfer, the money stays as Porkbun credit (`kept_as_credit`); retry that bill without `payWith`.
 
 ## If something sticks
 
 - Vault paused or payee missing: the call reverts or escalates. Unpause or `setPayee` from the owner, then retry the same bill.
-- CCTP: read `GET https://iris-api.circle.com/v2/messages/26?transactionHash=<burn>`. Forwarding is done when `forwardTxHash` is set. Do not burn a second time.
+- Vault pay simulated (`vault_not_broadcast`): the bill did not leave the vault. Fix the signer and `CONFIRM_MAINNET=1`, then retry the same bill. Do not bridge around it.
+- CCTP: read `GET https://iris-api.circle.com/v2/messages/26?transactionHash=<burn>`. Forwarding is done when `forwardTxHash` is set and the Base USDC balance covers the bill. `awaiting_mint` means wait and retry; do not burn a second time.
 - x402 `PAYMENT_PENDING` / `PAYMENT_IN_PROGRESS`: do not pay again. Poll Porkbun with the same idempotency key and `usdcCheckoutId`.
 - `PAYMENT_FAILED`, `COST_MISMATCH`, `MONTHLY_SPEND_LIMIT_EXCEEDED`, `VERIFICATION_REQUIRED`: the bill stores the code and `next_action`. Fix the account or the quote before another signature.
 - Leftover USDC: leave it, or transfer it back with the calldata from `return-float`. That transfer is not automatic.

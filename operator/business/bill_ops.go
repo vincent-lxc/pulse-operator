@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/vincent-lxc/pulse-operator/operator/models"
 	"github.com/vincent-lxc/pulse-operator/operator/procurement"
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
@@ -176,6 +177,9 @@ func authorizeBills(ctx context.Context, cfg treasury.Config, flags BillFlags, c
 	if cfg.Mode == "dry-run" || cfg.Mode == "" {
 		return procurement.Check(gate, procurement.Flags{BillCount: count, Yes: flags.Yes, Auto: flags.Auto, UnderstandRealMoney: flags.UnderstandRealMoney})
 	}
+	if err := checkLocalSigners(cfg); err != nil {
+		return err
+	}
 	rpc := os.Getenv(cfg.Secrets.RPCEnv)
 	if rpc == "" {
 		return fmt.Errorf("rpc url missing: set %s", cfg.Secrets.RPCEnv)
@@ -193,14 +197,110 @@ func authorizeBills(ctx context.Context, cfg treasury.Config, flags BillFlags, c
 		}
 		gate.BaseChainID = baseID
 	}
-	if cfg.Procurement.BaseAddress != "" && !strings.EqualFold(cfg.Procurement.BaseAddress, cfg.Procurement.Address) {
-		if key, err := treasury.LoadPrivateKey(cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile); err == nil && key != nil {
-			gate.BaseAddressControlled = false
-		}
+	if err := checkOnChainSigners(ctx, cfg, rpc); err != nil {
+		return err
 	}
 	return procurement.Check(gate, procurement.Flags{
 		UnderstandRealMoney: flags.UnderstandRealMoney, Yes: flags.Yes, Auto: flags.Auto, BillCount: count,
 	})
+}
+
+func rawKeyMode(cfg treasury.Config) bool {
+	if cfg.Mode == "mainnet" {
+		return true
+	}
+	return cfg.Executor == "" || cfg.Executor == "raw-key"
+}
+
+// checkLocalSigners 在拨号之前核对私钥和配置地址。错误里不出现密钥。
+func checkLocalSigners(cfg treasury.Config) error {
+	if !strictVault(cfg.Mode) {
+		return nil
+	}
+	agentKey, err := treasury.LoadPrivateKey(cfg.Secrets.AgentKeyEnv, cfg.Secrets.AgentKeyFile)
+	if err != nil {
+		return err
+	}
+	if agentKey == nil {
+		return fmt.Errorf("agent key missing: set %s or %s", cfg.Secrets.AgentKeyEnv, cfg.Secrets.AgentKeyFile)
+	}
+	agentAddr := crypto.PubkeyToAddress(agentKey.PublicKey)
+	if !common.IsHexAddress(cfg.Agent) || common.HexToAddress(cfg.Agent) != agentAddr {
+		return fmt.Errorf("agent key address %s does not match config agent %s", agentAddr.Hex(), cfg.Agent)
+	}
+	procKey, err := treasury.LoadPrivateKey(cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+	if err != nil {
+		return err
+	}
+	if procKey == nil {
+		return fmt.Errorf("procurement key missing: set %s or %s", cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
+	}
+	procAddr := crypto.PubkeyToAddress(procKey.PublicKey)
+	if !common.IsHexAddress(cfg.Procurement.Address) || common.HexToAddress(cfg.Procurement.Address) != procAddr {
+		return fmt.Errorf("procurement key address %s does not match procurement.address %s", procAddr.Hex(), cfg.Procurement.Address)
+	}
+	if rawKeyMode(cfg) {
+		base := strings.TrimSpace(cfg.Procurement.BaseAddress)
+		if base != "" && !strings.EqualFold(base, cfg.Procurement.Address) {
+			return fmt.Errorf("procurement.baseAddress must be empty or equal procurement.address in raw-key mode")
+		}
+	}
+	return nil
+}
+
+// checkOnChainSigners 只读金库 agent() 和原生余额。不发送交易。
+func checkOnChainSigners(ctx context.Context, cfg treasury.Config, rpc string) error {
+	if !strictVault(cfg.Mode) {
+		return nil
+	}
+	agentKey, err := treasury.LoadPrivateKey(cfg.Secrets.AgentKeyEnv, cfg.Secrets.AgentKeyFile)
+	if err != nil {
+		return err
+	}
+	if agentKey == nil {
+		return fmt.Errorf("agent key missing: set %s or %s", cfg.Secrets.AgentKeyEnv, cfg.Secrets.AgentKeyFile)
+	}
+	agentAddr := crypto.PubkeyToAddress(agentKey.PublicKey)
+	onchain, err := procurement.VaultAgent(ctx, rpc, cfg.Vault)
+	if err != nil {
+		return err
+	}
+	if onchain != agentAddr {
+		return fmt.Errorf("config agent %s does not match PolicyVault.agent() %s", agentAddr.Hex(), onchain.Hex())
+	}
+	floor, label, err := nativeGasFloor(cfg)
+	if err != nil {
+		return err
+	}
+	procAddr := common.HexToAddress(cfg.Procurement.Address)
+	if err := requireNative(ctx, rpc, agentAddr, floor, label, "agent"); err != nil {
+		return err
+	}
+	return requireNative(ctx, rpc, procAddr, floor, label, "procurement wallet")
+}
+
+func nativeGasFloor(cfg treasury.Config) (*big.Int, string, error) {
+	raw := strings.TrimSpace(cfg.MinGasUSDC)
+	if raw == "" {
+		raw = "0.05"
+	}
+	units, err := treasury.ParseUSDCAllowZero(raw)
+	if err != nil {
+		return nil, raw, fmt.Errorf("minGasUSDC: %w", err)
+	}
+	// Arc 原生余额是 18 位 wei。配置里的 USDC 是 6 位小数，1 USDC = 10^12 wei。
+	return new(big.Int).Mul(units, big.NewInt(1_000_000_000_000)), raw, nil
+}
+
+func requireNative(ctx context.Context, rpc string, account common.Address, floor *big.Int, label, who string) error {
+	bal, err := procurement.NativeBalance(ctx, rpc, account.Hex())
+	if err != nil {
+		return fmt.Errorf("read %s native balance: %w", who, err)
+	}
+	if floor != nil && bal.Cmp(floor) < 0 {
+		return fmt.Errorf("%s native balance is below minGasUSDC %s", who, label)
+	}
+	return nil
 }
 
 func porkbunReady(cfg treasury.Config) (bool, error) {

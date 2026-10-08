@@ -3,10 +3,12 @@ package treasury
 
 import (
 	"crypto/ecdsa"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -28,7 +30,35 @@ func loadHex(envName, filePath string) (string, error) {
 	if err != nil || raw == "" {
 		return "", err
 	}
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "{") {
+		return hexFromJSON(raw)
+	}
 	return strings.TrimPrefix(raw, "0x"), nil
+}
+
+// hexFromJSON 接受 {"private_key":"0x..."}。有 address 时必须和私钥推出的地址一致。
+// 错误文本不包含密钥内容。
+func hexFromJSON(raw string) (string, error) {
+	var body struct {
+		Address    string `json:"address"`
+		PrivateKey string `json:"private_key"`
+	}
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		return "", fmt.Errorf("invalid private key file")
+	}
+	hexKey := strings.TrimPrefix(strings.TrimSpace(body.PrivateKey), "0x")
+	key, err := crypto.HexToECDSA(hexKey)
+	if err != nil {
+		return "", fmt.Errorf("invalid private key")
+	}
+	if strings.TrimSpace(body.Address) != "" {
+		got := crypto.PubkeyToAddress(key.PublicKey)
+		if !common.IsHexAddress(body.Address) || common.HexToAddress(body.Address) != got {
+			return "", fmt.Errorf("key file address does not match the private key")
+		}
+	}
+	return hexKey, nil
 }
 
 // LoadSecret 读取一段机密。环境变量优先；文件必须是 0600 或更严。两者都空时返回空串。
