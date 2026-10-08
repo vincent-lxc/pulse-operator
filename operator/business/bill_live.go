@@ -299,12 +299,14 @@ func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.
 		CheckoutID: bill.PorkbunCheckoutID, Idempotency: "bill-" + bill.Code,
 		Network: network, Asset: asset, Now: time.Now().UTC(), Sign: sign,
 	})
+	required := procurement.DecodedPaymentRequired(order.Required)
 	if err != nil {
-		return merchantResult{CheckoutID: order.CheckoutID}, err
+		return merchantResult{CheckoutID: order.CheckoutID, Required: required}, err
 	}
 	return merchantResult{
 		OrderID: order.OrderID, CheckoutID: order.CheckoutID, KeptAsCredit: order.KeptAsCredit,
-		BalanceCents: order.BalanceCents, Pending: order.Code == "PAYMENT_PENDING" || order.Code == "PAYMENT_IN_PROGRESS",
+		BalanceCents: order.BalanceCents, Required: required,
+		Pending: order.Code == "PAYMENT_PENDING" || order.Code == "PAYMENT_IN_PROGRESS",
 	}, nil
 }
 
@@ -407,6 +409,21 @@ func baseWalletID(cfg treasury.Config) (string, error) {
 	return treasury.LoadSecret(cfg.Procurement.WalletIDEnv, cfg.Procurement.WalletIDFile)
 }
 
+func arcGas(cfg treasury.Config) procurement.TxGas {
+	maxGwei := cfg.Gas.MaxFeePerGasGwei
+	if maxGwei <= 0 {
+		maxGwei = 50
+	}
+	tipGwei := cfg.Gas.MaxPriorityFeePerGasGwei
+	if tipGwei <= 0 {
+		tipGwei = 2
+	}
+	return procurement.TxGas{
+		MaxFeeWei: new(big.Int).Mul(big.NewInt(maxGwei), big.NewInt(1_000_000_000)),
+		TipWei:    new(big.Int).Mul(big.NewInt(tipGwei), big.NewInt(1_000_000_000)),
+	}
+}
+
 func sendProcurement(ctx context.Context, cfg treasury.Config, to common.Address, data []byte, abiSig string, params []string, idem string) (string, string, error) {
 	key, err := treasury.LoadPrivateKey(cfg.Procurement.KeyEnv, cfg.Procurement.KeyFile)
 	if err != nil {
@@ -420,7 +437,7 @@ func sendProcurement(ctx context.Context, cfg treasury.Config, to common.Address
 		if !ok {
 			return "", "", fmt.Errorf("invalid chain id")
 		}
-		tx, err := procurement.SendCall(ctx, os.Getenv(cfg.Secrets.RPCEnv), chainID, key, to, data)
+		tx, err := procurement.SendCall(ctx, os.Getenv(cfg.Secrets.RPCEnv), chainID, key, to, data, arcGas(cfg))
 		return tx, "", err
 	}
 	if cfg.Mode == "mainnet" {
@@ -514,7 +531,7 @@ func receiveOnBase(ctx context.Context, cfg treasury.Config, msg procurement.Mes
 	if cfg.Mode == "mainnet" {
 		chainID = big.NewInt(procurement.BaseChainID)
 	}
-	return procurement.SendCall(ctx, os.Getenv(cfg.Base.RPCEnv), chainID, key, common.HexToAddress(transmitter), data)
+	return procurement.SendCall(ctx, os.Getenv(cfg.Base.RPCEnv), chainID, key, common.HexToAddress(transmitter), data, procurement.TxGas{})
 }
 
 func httpGet(ctx context.Context, url string) ([]byte, error) {

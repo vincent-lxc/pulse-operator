@@ -218,6 +218,7 @@ func openChain(ctx context.Context, cfg treasury.Config, payables []treasury.Pay
 		AgentKey:   ak,
 		OwnerKey:   okey,
 		GasGwei:    cfg.Gas.MaxFeePerGasGwei,
+		TipGwei:    cfg.Gas.MaxPriorityFeePerGasGwei,
 		Lookback:   cfg.LogLookback,
 		Chunk:      cfg.LogChunk,
 		FullScan:   cfg.FullLogScan,

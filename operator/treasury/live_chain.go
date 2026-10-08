@@ -20,6 +20,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
+
+	"github.com/vincent-lxc/pulse-operator/operator/procurement"
 )
 
 // LiveChain 是 Arc 上的 PolicyVault 客户端。
@@ -37,6 +39,7 @@ type LiveChain struct {
 	agentKey   *ecdsa.PrivateKey
 	ownerKey   *ecdsa.PrivateKey
 	gasPrice   *big.Int
+	tipWei     *big.Int
 	lookback   uint64
 	chunk      uint64
 	fullScan   bool
@@ -59,6 +62,7 @@ type LiveOptions struct {
 	AgentKey   *ecdsa.PrivateKey
 	OwnerKey   *ecdsa.PrivateKey
 	GasGwei    int64
+	TipGwei    int64
 	Lookback   uint64
 	Chunk      uint64
 	FullScan   bool
@@ -99,10 +103,30 @@ func DialLive(ctx context.Context, opt LiveOptions) (*LiveChain, error) {
 		agentKey:   opt.AgentKey,
 		ownerKey:   opt.OwnerKey,
 		gasPrice:   new(big.Int).Mul(big.NewInt(opt.GasGwei), big.NewInt(1_000_000_000)),
+		tipWei:     new(big.Int).Mul(big.NewInt(tipGwei(opt.TipGwei)), big.NewInt(1_000_000_000)),
 		lookback:   opt.Lookback,
 		chunk:      opt.Chunk,
 		fullScan:   opt.FullScan,
 	}, nil
+}
+
+func tipGwei(v int64) int64 {
+	if v <= 0 {
+		return 2
+	}
+	return v
+}
+
+func (c *LiveChain) txGasPrice(ctx context.Context) *big.Int {
+	var baseFee *big.Int
+	if header, err := c.eth.HeaderByNumber(ctx, nil); err == nil && header != nil {
+		baseFee = header.BaseFee
+	}
+	suggested, err := c.eth.SuggestGasPrice(ctx)
+	if err != nil {
+		suggested = nil
+	}
+	return procurement.ArcGasPrice(suggested, baseFee, c.tipWei, c.gasPrice)
 }
 
 func dialRPC(ctx context.Context, url string) (*ethclient.Client, error) {
@@ -391,7 +415,7 @@ func (c *LiveChain) send(ctx context.Context, from common.Address, key *ecdsa.Pr
 		To:       &c.vault,
 		Value:    big.NewInt(0),
 		Gas:      gas + gas/5,
-		GasPrice: c.gasPrice,
+		GasPrice: c.txGasPrice(ctx),
 		Data:     data,
 	})
 	signed, err := types.SignTx(tx, types.LatestSignerForChainID(c.chainID), key)

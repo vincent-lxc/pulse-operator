@@ -15,8 +15,14 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
+// TxGas 是 Arc 交易的手续费上限。MaxFeeWei 是配置里的封顶，TipWei 加在 base fee 上。
+type TxGas struct {
+	MaxFeeWei *big.Int
+	TipWei    *big.Int
+}
+
 // SendCall 签名并等待回执。调用方必须已经通过主网闸门。
-func SendCall(ctx context.Context, rpc string, chainID *big.Int, key *ecdsa.PrivateKey, to common.Address, data []byte) (string, error) {
+func SendCall(ctx context.Context, rpc string, chainID *big.Int, key *ecdsa.PrivateKey, to common.Address, data []byte, quote TxGas) (string, error) {
 	if key == nil {
 		return "", fmt.Errorf("signer is missing")
 	}
@@ -30,19 +36,26 @@ func SendCall(ctx context.Context, rpc string, chainID *big.Int, key *ecdsa.Priv
 	if err != nil {
 		return "", err
 	}
-	gas, err := client.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &to, Data: data})
+	limit, err := client.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &to, Data: data})
 	if err != nil {
 		return "", err
 	}
-	price, err := client.SuggestGasPrice(ctx)
-	if err != nil || price == nil {
-		price = big.NewInt(50_000_000_000)
+	var baseFee *big.Int
+	if header, err := client.HeaderByNumber(ctx, nil); err == nil && header != nil {
+		baseFee = header.BaseFee
 	}
-	if price.Cmp(big.NewInt(20_000_000_000)) < 0 && chainID != nil && (chainID.Cmp(big.NewInt(ArcMainnetChainID)) == 0 || chainID.Cmp(big.NewInt(ArcTestnetChainID)) == 0) {
+	suggested, suggestErr := client.SuggestGasPrice(ctx)
+	if suggestErr != nil {
+		suggested = nil
+	}
+	price := suggested
+	if arcChain(chainID) {
+		price = ArcGasPrice(suggested, baseFee, quote.TipWei, quote.MaxFeeWei)
+	} else if price == nil || price.Sign() <= 0 {
 		price = big.NewInt(50_000_000_000)
 	}
 	tx := types.NewTx(&types.LegacyTx{
-		Nonce: nonce, To: &to, Value: big.NewInt(0), Gas: gas + gas/5, GasPrice: price, Data: data,
+		Nonce: nonce, To: &to, Value: big.NewInt(0), Gas: limit + limit/5, GasPrice: price, Data: data,
 	})
 	signed, err := types.SignTx(tx, types.LatestSignerForChainID(chainID), key)
 	if err != nil {

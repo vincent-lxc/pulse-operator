@@ -80,6 +80,40 @@ func TestMainnetPayBroadcastGate(t *testing.T) {
 	if paid.Status != "paid" || !realHash(paid.TxHash) || !containsMethod(hits.methods(), "eth_sendRawTransaction") {
 		t.Fatalf("%+v methods %v", paid, hits.methods())
 	}
+	if hits.lastPrice == nil || hits.lastPrice.Cmp(big.NewInt(20_000_000_000)) != 0 {
+		t.Fatalf("gas price %s", hits.lastPrice)
+	}
+}
+
+func TestPayCapsGasAtConfigMax(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	srv, hits := newVaultRPC(t, vault, key)
+	defer srv.Close()
+	hits.gasPrice = "0x174876e800"
+	t.Setenv("CONFIRM_MAINNET", "1")
+	live, err := DialLive(context.Background(), LiveOptions{
+		RPC: srv.URL, Mode: "mainnet", Broadcast: true, ChainID: big.NewInt(5042),
+		Vault: vault, Agent: crypto.PubkeyToAddress(key.PublicKey),
+		USDC:     common.HexToAddress("0x3600000000000000000000000000000000000000"),
+		AgentKey: key, GasGwei: 50,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.Close()
+	if _, err := live.Pay(context.Background(), PayCall{
+		Category: "domains", Payee: "0x3333333333333333333333333333333333333333",
+		Amount: big.NewInt(1_000_000), DecisionHash: common.HexToHash("0x01"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if hits.lastPrice == nil || hits.lastPrice.Cmp(big.NewInt(50_000_000_000)) != 0 {
+		t.Fatalf("gas price %s", hits.lastPrice)
+	}
 }
 
 func TestPayKeepsHashWhenReceiptWaitFails(t *testing.T) {
@@ -125,6 +159,8 @@ type rpcHits struct {
 	seen        []string
 	vault       common.Address
 	failReceipt bool
+	gasPrice    string
+	lastPrice   *big.Int
 }
 
 func (h *rpcHits) add(method string) {
@@ -203,6 +239,9 @@ func newVaultRPC(t *testing.T, vault common.Address, _ *ecdsa.PrivateKey) (*http
 			result = "0x0"
 		case "eth_gasPrice":
 			result = "0x4a817c800"
+			if hits.gasPrice != "" {
+				result = hits.gasPrice
+			}
 		case "eth_sendRawTransaction":
 			var hexTx string
 			_ = json.Unmarshal(req.Params[0], &hexTx)
@@ -211,6 +250,9 @@ func newVaultRPC(t *testing.T, vault common.Address, _ *ecdsa.PrivateKey) (*http
 				writeRPCError(w, req.ID, err.Error())
 				return
 			}
+			hits.mu.Lock()
+			hits.lastPrice = tx.GasPrice()
+			hits.mu.Unlock()
 			hash := tx.Hash()
 			logs := []any{}
 			if len(tx.Data()) >= 4 && string(tx.Data()[:4]) == string(payID) && len(tx.Data()) >= 32 {
