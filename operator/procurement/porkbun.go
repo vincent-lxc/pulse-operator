@@ -77,14 +77,15 @@ func (p *Porkbun) Renew(ctx context.Context, domain string, costCents int64, yea
 
 func (p *Porkbun) payBody(costCents int64, years int, dryRun bool, checkoutID string) map[string]any {
 	_ = years
-	body := map[string]any{"years": 1}
+	// /domain/create 把 agreeToTerms 列为必填，dry-run 示例同样带 "yes"。
+	// /domain/renew 的文档没有单独要求它；报价和真实请求共用这份请求体，所以续费也带上。
+	body := map[string]any{"years": 1, "agreeToTerms": "yes"}
 	if dryRun {
 		body["dryRun"] = true
 		body["cost"] = 0
 		return body
 	}
 	body["cost"] = costCents
-	body["agreeToTerms"] = "yes"
 	if checkoutID != "" {
 		body["usdcCheckoutId"] = checkoutID
 		return body
