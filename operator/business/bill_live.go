@@ -20,16 +20,23 @@ import (
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
 )
 
-func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps, error) {
+func porkbunClient(cfg treasury.Config) (*procurement.Porkbun, error) {
 	apiKey, err := treasury.LoadSecret(cfg.Porkbun.APIKeyEnv, cfg.Porkbun.APIKeyFile)
 	if err != nil {
-		return billDeps{}, err
+		return nil, err
 	}
 	secret, err := treasury.LoadSecret(cfg.Porkbun.SecretEnv, cfg.Porkbun.SecretFile)
 	if err != nil {
+		return nil, err
+	}
+	return &procurement.Porkbun{BaseURL: cfg.Porkbun.APIBase, APIKey: apiKey, Secret: secret}, nil
+}
+
+func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps, error) {
+	client, err := porkbunClient(cfg)
+	if err != nil {
 		return billDeps{}, err
 	}
-	client := &procurement.Porkbun{BaseURL: cfg.Porkbun.APIBase, APIKey: apiKey, Secret: secret}
 	deps.quote = func(ctx context.Context, bill *models.Bill) (int64, *big.Int, error) {
 		var order procurement.Order
 		var err error
@@ -298,12 +305,28 @@ func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.
 			return merchantResult{}, err
 		}
 	}
+	var signedBalance int64
+	var signedBalanceKnown bool
 	order, err := procurement.Collect(ctx, client, procurement.CollectInput{
 		Domain: bill.Domain, Kind: bill.Kind, CostCents: bill.QuoteCents, Years: bill.Years,
 		CheckoutID: bill.PorkbunCheckoutID, Idempotency: key,
 		Network: network, Asset: asset, Now: time.Now().UTC(), Sign: sign,
+		BeforeSign: func() error {
+			if client == nil {
+				return fmt.Errorf("account balance: porkbun client is missing")
+			}
+			cents, balErr := client.AccountBalance(ctx)
+			if balErr != nil {
+				return fmt.Errorf("account balance: %w", balErr)
+			}
+			if saveErr := recordAttemptBalance(bill, cents); saveErr != nil {
+				return saveErr
+			}
+			signedBalance, signedBalanceKnown = cents, true
+			return nil
+		},
 		OnSigned: func(signed procurement.SignedCheckout) error {
-			return markAttemptSigned(bill, signed)
+			return markAttemptSigned(bill, signed, signedBalance, signedBalanceKnown)
 		},
 	})
 	if finishErr := finishMerchantAttempt(bill, key, order, err); finishErr != nil && err == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/vincent-lxc/pulse-operator/operator/business"
@@ -14,7 +15,7 @@ import (
 
 func runBill(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: pulse bill add|run|list|export|approve|reopen|close|return-float")
+		return fmt.Errorf("usage: pulse bill add|run|list|export|approve|reopen|close|return-float|merchant-reset")
 	}
 	logx.Disable()
 	switch args[0] {
@@ -34,6 +35,8 @@ func runBill(args []string) error {
 		return billClose(args[1:])
 	case "return-float":
 		return billReturn(args[1:])
+	case "merchant-reset":
+		return billMerchantReset(args[1:])
 	default:
 		return fmt.Errorf("unknown bill command %s", args[0])
 	}
@@ -184,6 +187,43 @@ func billExport(args []string) error {
 	fmt.Println(text)
 	fmt.Println(raw)
 	return nil
+}
+
+func billMerchantReset(args []string) error {
+	fs := flag.NewFlagSet("bill merchant-reset", flag.ContinueOnError)
+	configPath := fs.String("config", "config/dry-run.yaml", "operator config")
+	id := fs.String("id", "", "bill id")
+	yes := fs.Bool("yes", false, "confirm a new merchant attempt after the signed authorization has expired unused")
+	var expectedSet bool
+	var expected int64
+	fs.Func("expected-balance-cents", "Porkbun account balance in cents; only when the signed attempt has no recorded balance", func(s string) error {
+		n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+		if err != nil || n < 0 {
+			return fmt.Errorf("--expected-balance-cents must be a non-negative integer")
+		}
+		expected = n
+		expectedSet = true
+		return nil
+	})
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*id) == "" {
+		return fmt.Errorf("bill merchant-reset requires --id")
+	}
+	cfg, err := treasury.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	var expectedPtr *int64
+	if expectedSet {
+		expectedPtr = &expected
+	}
+	row, err := business.MerchantReset(context.Background(), cfg, *id, *yes, expectedPtr)
+	if row != nil {
+		fmt.Println(business.BillRunLine(row))
+	}
+	return err
 }
 
 func billReturn(args []string) error {
