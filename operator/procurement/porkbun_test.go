@@ -115,6 +115,122 @@ func TestStoredCheckoutDoesNotSignWhenPaymentRequiredAgain(t *testing.T) {
 	}
 }
 
+func TestCollectPersistsCheckoutBeforeSignedPost(t *testing.T) {
+	var signedPosts int
+	var hookCalls int
+	var hookFirst bool
+	required := base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","amount":"2040000","asset":"0x036CbD53842c5426634e7929541eC2318f3dCF7e","payTo":"0x1111111111111111111111111111111111111111","maxTimeoutSeconds":300,"extra":{"name":"USDC","version":"2"}}]}`))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PAYMENT-SIGNATURE") == "" {
+			w.Header().Set("PAYMENT-REQUIRED", required)
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(`{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`))
+			return
+		}
+		signedPosts++
+		if hookCalls != 1 {
+			t.Errorf("signed post before hook, calls=%d", hookCalls)
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"status":"ERROR","message":"upstream"}`))
+	}))
+	defer srv.Close()
+	client := &Porkbun{BaseURL: srv.URL, MinInterval: -1}
+	order, err := Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", Kind: "domain_register", CostCents: 204, Years: 1,
+		Idempotency: "bill-pulse-xyz", Network: "eip155:84532",
+		Asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", Now: time.Unix(1_700_000_000, 0),
+		Sign: func(Accept, time.Time) (Payment, error) {
+			return Payment{Header: "signed-header", ValidBefore: 1_700_000_600, Nonce: "0xabc"}, nil
+		},
+		OnSigned: func(signed SignedCheckout) error {
+			hookCalls++
+			hookFirst = signedPosts == 0
+			if signed.CheckoutID != "chk-1" || signed.ValidBefore != 1_700_000_600 || signed.Nonce != "0xabc" {
+				t.Errorf("hook %+v", signed)
+			}
+			return nil
+		},
+	})
+	if err == nil || order.CheckoutID != "chk-1" || signedPosts != 1 || hookCalls != 1 || !hookFirst {
+		t.Fatalf("err=%v order=%+v posts=%d hooks=%d first=%v", err, order, signedPosts, hookCalls, hookFirst)
+	}
+}
+
+func TestCollectSkipsPostWhenSignedHookFails(t *testing.T) {
+	var signedPosts int
+	required := base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","amount":"2040000","asset":"0x036CbD53842c5426634e7929541eC2318f3dCF7e","payTo":"0x1111111111111111111111111111111111111111","maxTimeoutSeconds":300,"extra":{"name":"USDC","version":"2"}}]}`))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			signedPosts++
+		}
+		w.Header().Set("PAYMENT-REQUIRED", required)
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`))
+	}))
+	defer srv.Close()
+	client := &Porkbun{BaseURL: srv.URL, MinInterval: -1}
+	order, err := Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", Kind: "domain_register", CostCents: 204,
+		Network: "eip155:84532", Asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+		Sign: func(Accept, time.Time) (Payment, error) {
+			return Payment{Header: "signed-header", ValidBefore: 10, Nonce: "0xabc"}, nil
+		},
+		OnSigned: func(SignedCheckout) error {
+			return errString("bill save failed")
+		},
+	})
+	if err == nil || err.Error() != "bill save failed" || order.CheckoutID != "chk-1" || signedPosts != 0 {
+		t.Fatalf("err=%v checkout=%s posts=%d", err, order.CheckoutID, signedPosts)
+	}
+}
+
+func TestIdempotencyKeyInUseDoesNotSign(t *testing.T) {
+	var signed int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			signed++
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"IDEMPOTENCY_KEY_IN_USE","checkoutId":"chk-1","message":"in flight"}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "nope") {
+			t.Errorf("path")
+		}
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"usdcCheckoutId"`) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"code":"IDEMPOTENCY_KEY_IN_USE","checkoutId":"chk-9","message":"in flight"}`))
+			return
+		}
+		w.Header().Set("PAYMENT-REQUIRED", base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","amount":"2040000","asset":"0x036CbD53842c5426634e7929541eC2318f3dCF7e","payTo":"0x1111111111111111111111111111111111111111","maxTimeoutSeconds":300,"extra":{"name":"USDC","version":"2"}}]}`)))
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`))
+	}))
+	defer srv.Close()
+	client := &Porkbun{BaseURL: srv.URL, MinInterval: -1}
+	order, err := Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", CostCents: 204, CheckoutID: "chk-9", Idempotency: "bill-1",
+		Sign: func(Accept, time.Time) (Payment, error) {
+			t.Fatal("signed while IDEMPOTENCY_KEY_IN_USE")
+			return Payment{}, nil
+		},
+	})
+	if err != nil || order.Code != "IDEMPOTENCY_KEY_IN_USE" || signed != 0 {
+		t.Fatalf("poll err=%v order=%+v signed=%d", err, order, signed)
+	}
+	order, err = Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", Kind: "domain_register", CostCents: 204,
+		Network: "eip155:84532", Asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+		Sign: func(Accept, time.Time) (Payment, error) {
+			return Payment{Header: "signed-header", ValidBefore: 10, Nonce: "0xabc"}, nil
+		},
+	})
+	if err != nil || order.Code != "IDEMPOTENCY_KEY_IN_USE" || order.CheckoutID != "chk-1" || signed != 1 {
+		t.Fatalf("signed err=%v order=%+v signed=%d", err, order, signed)
+	}
+}
+
 func TestPorkbunRateLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"SUCCESS"}`))

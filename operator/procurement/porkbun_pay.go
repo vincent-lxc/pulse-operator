@@ -13,7 +13,16 @@ import (
 // 不能再签。需要人核对这笔付款。
 var ErrCheckoutNeedsReview = errors.New("checkout_needs_review")
 
+// SignedCheckout 是已经签好、还没提交的 checkout。没有签名，也没有密钥。
+type SignedCheckout struct {
+	CheckoutID  string
+	ValidBefore int64
+	Nonce       string
+}
+
 // CollectInput 是一次域名付款。
+// OnSigned 在签名成功后、带 PAYMENT-SIGNATURE 的请求发出前调用。
+// 它返回错误时不再提交签名。
 type CollectInput struct {
 	Domain      string
 	Kind        string
@@ -25,6 +34,7 @@ type CollectInput struct {
 	Asset       string
 	Now         time.Time
 	Sign        func(Accept, time.Time) (Payment, error)
+	OnSigned    func(SignedCheckout) error
 }
 
 // Collect 先下单，遇到 PAYMENT-REQUIRED 再签名并重试。
@@ -40,7 +50,7 @@ func Collect(ctx context.Context, client *Porkbun, in CollectInput) (Order, erro
 		return client.Create(ctx, in.Domain, in.CostCents, in.Years, false, checkout, in.Idempotency, signature)
 	}
 	order, err := call(in.CheckoutID, "")
-	if order.Code == "PAYMENT_IN_PROGRESS" || order.Code == "PAYMENT_PENDING" {
+	if paymentInFlight(order.Code) {
 		return order, nil
 	}
 	if err != nil && !paymentRequired(order) {
@@ -88,25 +98,48 @@ func Collect(ctx context.Context, client *Porkbun, in CollectInput) (Order, erro
 	if err != nil {
 		return order, err
 	}
+	if in.OnSigned != nil {
+		if hookErr := in.OnSigned(SignedCheckout{
+			CheckoutID:  order.CheckoutID,
+			ValidBefore: payment.ValidBefore,
+			Nonce:       payment.Nonce,
+		}); hookErr != nil {
+			return order, hookErr
+		}
+	}
 	signed, err := call(order.CheckoutID, payment.Header)
-	if err != nil && signed.Code != "PAYMENT_IN_PROGRESS" {
+	signed = keepCheckout(signed, order)
+	if err != nil && !paymentInFlight(signed.Code) {
 		return signed, err
 	}
+	return signed, nil
+}
+
+func keepCheckout(signed, first Order) Order {
 	if signed.Required == "" {
-		signed.Required = order.Required
+		signed.Required = first.Required
 	}
 	if signed.CheckoutID == "" {
-		signed.CheckoutID = order.CheckoutID
+		signed.CheckoutID = first.CheckoutID
 	}
-	signed.X402URL = first(signed.X402URL, order.X402URL)
-	return signed, nil
+	signed.X402URL = firstNonEmpty(signed.X402URL, first.X402URL)
+	return signed
+}
+
+func paymentInFlight(code string) bool {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "PAYMENT_IN_PROGRESS", "PAYMENT_PENDING", "IDEMPOTENCY_KEY_IN_USE":
+		return true
+	default:
+		return false
+	}
 }
 
 func paymentRequired(order Order) bool {
 	return order.HTTPStatus == 402 || order.Code == "PAYMENT_REQUIRED" || order.Required != ""
 }
 
-func first(a, b string) string {
+func firstNonEmpty(a, b string) string {
 	if a != "" {
 		return a
 	}

@@ -354,6 +354,9 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 			return err
 		}
 		if err != nil {
+			if paid.CheckoutID != "" && merchantAttemptSigned(bill) {
+				bill.PorkbunCheckoutID = paid.CheckoutID
+			}
 			bill.State = "failed_merchant"
 			bill.ReasonCode = merchantReasonCode(err, paid)
 			bill.Reason = err.Error()
@@ -390,6 +393,7 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 	}
 	bill.State = "done"
 	bill.PaidAt = time.Now().UTC().Format(time.RFC3339)
+	clearStaleFailureReason(bill)
 	bill.PorkbunURL = "https://porkbun.com/account/domains"
 	bill.Evidence = evidence(bill, deps.policy.ChainID)
 	if err := saveProgress(deps, bill); err != nil {
@@ -465,6 +469,19 @@ func hashLocked(bill *models.Bill) bool {
 	default:
 		return bill.VaultTx != ""
 	}
+}
+
+func clearStaleFailureReason(bill *models.Bill) {
+	if bill == nil || !staleFailureReason(bill.ReasonCode) {
+		return
+	}
+	bill.ReasonCode = ""
+	bill.Reason = ""
+}
+
+func staleFailureReason(code string) bool {
+	code = strings.TrimSpace(code)
+	return strings.HasPrefix(code, "merchant_") || strings.HasPrefix(code, "x402_") || code == "checkout_needs_review"
 }
 
 func terminal(state string) bool {

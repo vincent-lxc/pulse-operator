@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
 
@@ -163,8 +164,8 @@ func TestExpiredCheckoutTakesANewKey(t *testing.T) {
 			signatures++
 		}
 		if hits == 1 {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `{"status":"ERROR","code":"CHECKOUT_EXPIRED","message":"checkout expired"}`)
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"status":"ERROR","code":"PAYMENT_EXPIRED","message":"checkout expired"}`)
 			return
 		}
 		w.WriteHeader(http.StatusBadRequest)
@@ -192,7 +193,8 @@ func TestLegacyBillUsesAFreshKeyAndSignsOnce(t *testing.T) {
 	bill := bridgedBill(t, code)
 	bill.Domain = "pulseoperator.top"
 	bill.State = "failed_merchant"
-	bill.ReasonCode = "within_policy"
+	bill.ReasonCode = "merchant_insufficient_funds"
+	bill.Reason = "porkbun INSUFFICIENT_FUNDS: credit"
 	bill.MerchantAttempts = ""
 	bill.PorkbunCheckoutID = ""
 	if err := models.SaveBill(bill); err != nil {
@@ -241,9 +243,351 @@ func TestLegacyBillUsesAFreshKeyAndSignsOnce(t *testing.T) {
 	if bill.State != "done" || bill.PorkbunOrderID != "ord-1" || bill.VaultTx == "" || bill.BaseMintTx == "" {
 		t.Fatalf("state=%s order=%s vault=%s mint=%s", bill.State, bill.PorkbunOrderID, bill.VaultTx, bill.BaseMintTx)
 	}
+	if bill.ReasonCode != "" || bill.Reason != "" {
+		t.Fatalf("stale failure reason code=%s reason=%s", bill.ReasonCode, bill.Reason)
+	}
 	exported, _, err := ExportBill(bill.Code)
 	if err != nil || !strings.Contains(exported, want) || !strings.Contains(exported, legacy) {
 		t.Fatalf("export %v %s", err, exported)
+	}
+}
+
+func TestSignedRequestFailureSignsOnce(t *testing.T) {
+	if err := models.EnsureStorage(); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name      string
+		status    int
+		body      string
+		wantState string
+		wantCode  string
+	}{
+		{name: "http500", status: http.StatusInternalServerError, body: `{"status":"ERROR","message":"upstream"}`, wantState: "failed_merchant", wantCode: "x402_rejected"},
+		{name: "in_use", status: http.StatusConflict, body: `{"status":"ERROR","code":"IDEMPOTENCY_KEY_IN_USE","message":"in flight","checkoutId":"chk-1"}`, wantState: "bridged", wantCode: "payment_pending"},
+		{name: "mismatch", status: http.StatusConflict, body: `{"status":"ERROR","code":"PAYMENT_MISMATCH","message":"different price","checkoutId":"chk-1"}`, wantState: "failed_merchant", wantCode: "merchant_payment_mismatch"},
+		{name: "funds", status: http.StatusBadRequest, body: `{"status":"ERROR","code":"INSUFFICIENT_FUNDS","message":"credit","checkoutId":"chk-1"}`, wantState: "failed_merchant", wantCode: "merchant_insufficient_funds"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, payer := testPayer(t)
+			var keys []string
+			var signatures int
+			code := "bill-signed-" + strings.ReplaceAll(t.Name(), "/", "-")
+			pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				keys = append(keys, r.Header.Get("Idempotency-Key"))
+				raw, _ := io.ReadAll(r.Body)
+				body := string(raw)
+				sig := r.Header.Get("PAYMENT-SIGNATURE")
+				if sig != "" {
+					signatures++
+					stored, err := models.FindBill(code)
+					if err != nil || stored == nil || stored.PorkbunCheckoutID != "chk-1" || !strings.Contains(stored.MerchantAttempts, `"signed":true`) || !strings.Contains(stored.MerchantAttempts, `"valid_before":`) || !strings.Contains(stored.MerchantAttempts, `"nonce":"0x`) {
+						attempts := ""
+						checkout := ""
+						if stored != nil {
+							attempts = stored.MerchantAttempts
+							checkout = stored.PorkbunCheckoutID
+						}
+						t.Errorf("signed marker missing before post checkout=%s attempts=%s err=%v", checkout, attempts, err)
+					}
+					if stored != nil && (strings.Contains(stored.MerchantAttempts, sig) || strings.Contains(stored.MerchantAttempts, `"signature"`)) {
+						t.Errorf("signature stored in %s", stored.MerchantAttempts)
+					}
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, tc.body)
+					return
+				}
+				if strings.Contains(body, `"usdcCheckoutId"`) {
+					if !strings.Contains(body, `"usdcCheckoutId":"chk-1"`) {
+						t.Errorf("poll body %s", body)
+					}
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, tc.body)
+					return
+				}
+				w.Header().Set("PAYMENT-REQUIRED", exactOfferHeader())
+				w.WriteHeader(http.StatusPaymentRequired)
+				_, _ = io.WriteString(w, `{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`)
+			}))
+			defer pork.Close()
+			base := balanceServer(t)
+			defer base.Close()
+			t.Setenv("BASE_RPC_URL", base.URL)
+			bill := bridgedBill(t, code)
+			deps := merchantDeps(t, pork.URL, payer)
+			var vaults, burns int
+			deps.vault = countVault(&vaults)
+			deps.burn = countBurn(&burns)
+			err := AdvanceBill(context.Background(), bill, deps)
+			if tc.wantCode == "payment_pending" && err != nil {
+				t.Fatalf("in progress err=%v", err)
+			}
+			if tc.wantCode != "payment_pending" && err == nil {
+				t.Fatal("expected the signed request to fail")
+			}
+			if bill.State != tc.wantState || bill.ReasonCode != tc.wantCode || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" || vaults != 0 || burns != 0 {
+				t.Fatalf("state=%s code=%s checkout=%s sig=%d vaults=%d burns=%d err=%v attempts=%s", bill.State, bill.ReasonCode, bill.PorkbunCheckoutID, signatures, vaults, burns, err, bill.MerchantAttempts)
+			}
+			err = AdvanceBill(context.Background(), bill, deps)
+			if tc.wantCode == "payment_pending" && err != nil {
+				t.Fatalf("retry err=%v", err)
+			}
+			if tc.wantCode != "payment_pending" && err == nil {
+				t.Fatal("expected the poll to fail")
+			}
+			if signatures != 1 || bill.State != tc.wantState || bill.ReasonCode != tc.wantCode || bill.PorkbunCheckoutID != "chk-1" || vaults != 0 || burns != 0 {
+				t.Fatalf("retry state=%s code=%s checkout=%s sig=%d keys=%v err=%v attempts=%s", bill.State, bill.ReasonCode, bill.PorkbunCheckoutID, signatures, keys, err, bill.MerchantAttempts)
+			}
+			want := merchantAttemptKey(bill.Code, 1)
+			for _, key := range keys {
+				if key != want {
+					t.Fatalf("rotated keys=%v", keys)
+				}
+			}
+			if strings.Count(bill.MerchantAttempts, `"n":`) != 1 || !strings.Contains(bill.MerchantAttempts, `"signed":true`) {
+				t.Fatalf("attempts %s", bill.MerchantAttempts)
+			}
+		})
+	}
+}
+
+func TestFresh402AfterSignedNeedsReview(t *testing.T) {
+	if err := models.EnsureStorage(); err != nil {
+		t.Fatal(err)
+	}
+	_, payer := testPayer(t)
+	var keys []string
+	var signatures int
+	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			signatures++
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"status":"ERROR","message":"upstream","checkoutId":"chk-1"}`)
+			return
+		}
+		if strings.Contains(body, `"usdcCheckoutId"`) {
+			w.Header().Set("PAYMENT-REQUIRED", exactOfferHeader())
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = io.WriteString(w, `{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`)
+			return
+		}
+		w.Header().Set("PAYMENT-REQUIRED", exactOfferHeader())
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = io.WriteString(w, `{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`)
+	}))
+	defer pork.Close()
+	base := balanceServer(t)
+	defer base.Close()
+	t.Setenv("BASE_RPC_URL", base.URL)
+	bill := bridgedBill(t, "bill-review-"+strings.ReplaceAll(t.Name(), "/", "-"))
+	deps := merchantDeps(t, pork.URL, payer)
+	if err := AdvanceBill(context.Background(), bill, deps); err == nil || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" {
+		t.Fatalf("first sig=%d checkout=%s err=%v attempts=%s", signatures, bill.PorkbunCheckoutID, err, bill.MerchantAttempts)
+	}
+	err := AdvanceBill(context.Background(), bill, deps)
+	want := merchantAttemptKey(bill.Code, 1)
+	if err == nil || !strings.Contains(err.Error(), "checkout_needs_review") || bill.ReasonCode != "checkout_needs_review" || bill.State != "failed_merchant" || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" {
+		t.Fatalf("state=%s code=%s checkout=%s sig=%d err=%v", bill.State, bill.ReasonCode, bill.PorkbunCheckoutID, signatures, err)
+	}
+	for _, key := range keys {
+		if key != want {
+			t.Fatalf("keys=%v", keys)
+		}
+	}
+	if strings.Count(bill.MerchantAttempts, `"n":`) != 1 {
+		t.Fatalf("attempts %s", bill.MerchantAttempts)
+	}
+}
+
+func TestSignedThenExpiredAllowsOneNewAttempt(t *testing.T) {
+	if err := models.EnsureStorage(); err != nil {
+		t.Fatal(err)
+	}
+	_, payer := testPayer(t)
+	var keys []string
+	var signatures int
+	phase := "fail"
+	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		raw, _ := io.ReadAll(r.Body)
+		body := string(raw)
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			signatures++
+			if phase != "fail" && phase != "new" {
+				t.Errorf("signed during %s", phase)
+			}
+			if phase == "new" {
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{"status":"SUCCESS","orderId":"ord-2","checkoutId":"chk-2"}`)
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"status":"ERROR","message":"upstream"}`)
+			return
+		}
+		if phase == "expired" {
+			if !strings.Contains(body, `"usdcCheckoutId":"chk-1"`) {
+				t.Errorf("poll body %s", body)
+			}
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"status":"ERROR","code":"PAYMENT_EXPIRED","message":"checkout expired","checkoutId":"chk-1"}`)
+			return
+		}
+		w.Header().Set("PAYMENT-REQUIRED", exactOfferHeader())
+		w.WriteHeader(http.StatusPaymentRequired)
+		checkout := "chk-1"
+		if phase == "new" {
+			checkout = "chk-2"
+		}
+		_, _ = io.WriteString(w, `{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"`+checkout+`"}`)
+	}))
+	defer pork.Close()
+	base := balanceServer(t)
+	defer base.Close()
+	t.Setenv("BASE_RPC_URL", base.URL)
+	bill := bridgedBill(t, "bill-lapsed-"+strings.ReplaceAll(t.Name(), "/", "-"))
+	deps := merchantDeps(t, pork.URL, payer)
+	var vaults, burns int
+	deps.vault = countVault(&vaults)
+	deps.burn = countBurn(&burns)
+	if err := AdvanceBill(context.Background(), bill, deps); err == nil || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" || !strings.Contains(bill.MerchantAttempts, `"signed":true`) {
+		t.Fatalf("sign sig=%d checkout=%s err=%v attempts=%s", signatures, bill.PorkbunCheckoutID, err, bill.MerchantAttempts)
+	}
+	attempts, err := parseMerchantAttempts(bill.MerchantAttempts)
+	if err != nil || len(attempts) != 1 || attempts[0].ValidBefore <= time.Now().Unix() || attempts[0].Nonce == "" {
+		t.Fatalf("marker %+v err=%v", attempts, err)
+	}
+	phase = "expired"
+	if err = AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_checkout_expired" || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" || strings.Count(bill.MerchantAttempts, `"n":`) != 1 {
+		t.Fatalf("future expiry code=%s checkout=%s sig=%d err=%v attempts=%s", bill.ReasonCode, bill.PorkbunCheckoutID, signatures, err, bill.MerchantAttempts)
+	}
+	patchValidBefore(t, bill, time.Now().Unix()-30)
+	if err = AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_checkout_expired" || signatures != 1 || strings.Count(bill.MerchantAttempts, `"n":`) != 1 || !strings.Contains(bill.MerchantAttempts, `"outcome":"expired"`) {
+		t.Fatalf("lapsed expiry code=%s sig=%d err=%v attempts=%s", bill.ReasonCode, signatures, err, bill.MerchantAttempts)
+	}
+	phase = "new"
+	if err = AdvanceBill(context.Background(), bill, deps); err != nil || signatures != 2 || vaults != 0 || burns != 0 || bill.State != "done" || bill.PorkbunOrderID != "ord-2" {
+		t.Fatalf("new state=%s order=%s sig=%d vaults=%d burns=%d err=%v attempts=%s", bill.State, bill.PorkbunOrderID, signatures, vaults, burns, err, bill.MerchantAttempts)
+	}
+	if keys[len(keys)-1] != merchantAttemptKey(bill.Code, 2) || strings.Count(bill.MerchantAttempts, `"n":`) != 2 {
+		t.Fatalf("keys=%v attempts=%s", keys, bill.MerchantAttempts)
+	}
+	if bill.ReasonCode != "" || bill.Reason != "" {
+		t.Fatalf("stale reason code=%s reason=%s", bill.ReasonCode, bill.Reason)
+	}
+}
+
+func TestLapsedAuthorizationWithoutPaymentExpiredDoesNotRotate(t *testing.T) {
+	if err := models.EnsureStorage(); err != nil {
+		t.Fatal(err)
+	}
+	_, payer := testPayer(t)
+	var signatures int
+	var keys []string
+	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		raw, _ := io.ReadAll(r.Body)
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			signatures++
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"status":"ERROR","message":"upstream"}`)
+			return
+		}
+		if strings.Contains(string(raw), `"usdcCheckoutId"`) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"status":"ERROR","message":"still settling"}`)
+			return
+		}
+		w.Header().Set("PAYMENT-REQUIRED", exactOfferHeader())
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = io.WriteString(w, `{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`)
+	}))
+	defer pork.Close()
+	base := balanceServer(t)
+	defer base.Close()
+	t.Setenv("BASE_RPC_URL", base.URL)
+	bill := bridgedBill(t, "bill-not-expired-"+strings.ReplaceAll(t.Name(), "/", "-"))
+	deps := merchantDeps(t, pork.URL, payer)
+	if err := AdvanceBill(context.Background(), bill, deps); err == nil || signatures != 1 {
+		t.Fatalf("sig=%d err=%v", signatures, err)
+	}
+	patchValidBefore(t, bill, time.Now().Unix()-30)
+	if err := AdvanceBill(context.Background(), bill, deps); err == nil || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" || strings.Count(bill.MerchantAttempts, `"n":`) != 1 {
+		t.Fatalf("poll sig=%d checkout=%s err=%v attempts=%s", signatures, bill.PorkbunCheckoutID, err, bill.MerchantAttempts)
+	}
+	if err := AdvanceBill(context.Background(), bill, deps); err == nil || signatures != 1 || strings.Count(bill.MerchantAttempts, `"outcome":"expired"`) != 0 {
+		t.Fatalf("retry sig=%d err=%v attempts=%s keys=%v", signatures, err, bill.MerchantAttempts, keys)
+	}
+	want := merchantAttemptKey(bill.Code, 1)
+	for _, key := range keys {
+		if key != want {
+			t.Fatalf("keys=%v", keys)
+		}
+	}
+}
+
+func TestExpirySubstringDoesNotOpenANewAttempt(t *testing.T) {
+	if err := models.EnsureStorage(); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "checkout_expired", body: `{"status":"ERROR","code":"CHECKOUT_EXPIRED","message":"checkout expired"}`, want: "merchant_checkout_expired"},
+		{name: "message", body: `{"status":"ERROR","code":"COST_MISMATCH","message":"quote will EXPIRE tomorrow"}`, want: "merchant_cost_mismatch"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bill := bridgedBill(t, "bill-substr-"+strings.ReplaceAll(t.Name(), "/", "-"))
+			bill.PorkbunCheckoutID = "chk-old"
+			bill.MerchantAttempts = `[{"n":1,"key":"` + merchantAttemptKey(bill.Code, 1) + `","at":"2026-10-08T00:00:00Z","outcome":"pending","checkout":"chk-old"}]`
+			if err := models.SaveBill(bill); err != nil {
+				t.Fatal(err)
+			}
+			var keys []string
+			var signatures int
+			pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				keys = append(keys, r.Header.Get("Idempotency-Key"))
+				if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+					signatures++
+				}
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer pork.Close()
+			deps := merchantDeps(t, pork.URL, "")
+			if err := AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != tc.want || signatures != 0 || len(keys) != 1 || bill.PorkbunCheckoutID != "chk-old" || strings.Contains(bill.MerchantAttempts, `"outcome":"expired"`) {
+				t.Fatalf("first code=%s checkout=%s sig=%d err=%v attempts=%s", bill.ReasonCode, bill.PorkbunCheckoutID, signatures, err, bill.MerchantAttempts)
+			}
+			if err := AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != tc.want || signatures != 0 || len(keys) != 2 || keys[1] != keys[0] || bill.PorkbunCheckoutID != "chk-old" {
+				t.Fatalf("second code=%s keys=%v checkout=%s sig=%d err=%v", bill.ReasonCode, keys, bill.PorkbunCheckoutID, signatures, err)
+			}
+		})
+	}
+}
+
+func exactOfferHeader() string {
+	return base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:8453","amount":"8750000","asset":"` + procurement.BaseUSDC + `","payTo":"0x3333333333333333333333333333333333333333","maxTimeoutSeconds":600,"extra":{"name":"USDC","version":"2"}}]}`))
+}
+
+func patchValidBefore(t *testing.T, bill *models.Bill, unix int64) {
+	t.Helper()
+	attempts, err := parseMerchantAttempts(bill.MerchantAttempts)
+	if err != nil || len(attempts) == 0 || !attempts[len(attempts)-1].Signed {
+		t.Fatalf("attempts %s err=%v", bill.MerchantAttempts, err)
+	}
+	attempts[len(attempts)-1].ValidBefore = unix
+	if err = writeMerchantAttempts(bill, attempts); err != nil {
+		t.Fatal(err)
+	}
+	if err = models.SaveBill(bill); err != nil {
+		t.Fatal(err)
 	}
 }
 

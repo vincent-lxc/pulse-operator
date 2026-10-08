@@ -13,13 +13,18 @@ import (
 )
 
 // merchantAttempt 是一次 Porkbun create/renew。同一个 N 的网络重试复用 Key。
+// Signed 为真表示授权已经签好，并且在带签名的请求发出前落了库。
+// ValidBefore 和 Nonce 是 authorization 里的字段，不是签名，也不是密钥。
 type merchantAttempt struct {
-	N        int    `json:"n"`
-	Key      string `json:"key"`
-	At       string `json:"at"`
-	Outcome  string `json:"outcome"`
-	Reason   string `json:"reason,omitempty"`
-	Checkout string `json:"checkout,omitempty"`
+	N           int    `json:"n"`
+	Key         string `json:"key"`
+	At          string `json:"at"`
+	Outcome     string `json:"outcome"`
+	Reason      string `json:"reason,omitempty"`
+	Checkout    string `json:"checkout,omitempty"`
+	Signed      bool   `json:"signed,omitempty"`
+	ValidBefore int64  `json:"valid_before,omitempty"`
+	Nonce       string `json:"nonce,omitempty"`
 }
 
 func legacyMerchantKey(code string) string {
@@ -52,7 +57,7 @@ func writeMerchantAttempts(bill *models.Bill, attempts []merchantAttempt) error 
 }
 
 // prepareMerchantKey 在调用 Porkbun 前定下本次尝试的 Idempotency-Key，并先落库。
-// 已有未过期的 checkout 时不换键。上一试已经确定没有可用 checkout 时才递增。
+// 已经签过的尝试不换键。未签名的上一试已经确定没有可用 checkout 时才递增。
 func prepareMerchantKey(bill *models.Bill) (string, error) {
 	if bill == nil || strings.TrimSpace(bill.Code) == "" {
 		return "", fmt.Errorf("bill id is missing")
@@ -112,13 +117,28 @@ func finishMerchantAttempt(bill *models.Bill, key string, order procurement.Orde
 	}
 	last := &attempts[len(attempts)-1]
 	outcome, reason := classifyMerchantAttempt(order, callErr)
-	if outcome == "started" && last.Outcome != "" && last.Outcome != "started" {
-		if reason != "" {
-			last.Reason = publicText(reason)
-		}
-	} else {
+	reason = publicText(reason)
+	switch {
+	case last.Signed && paymentExpired(order) && authorizationLapsed(last.ValidBefore, time.Now()):
+		last.Outcome = "expired"
+		last.Reason = reason
+	case last.Signed && (outcome == "accepted" || outcome == "pending"):
 		last.Outcome = outcome
-		last.Reason = publicText(reason)
+		last.Reason = reason
+	case last.Signed:
+		if reason != "" {
+			last.Reason = reason
+		}
+		if last.Outcome == "" || last.Outcome == "started" {
+			last.Outcome = "signed"
+		}
+	case outcome == "started" && last.Outcome != "" && last.Outcome != "started":
+		if reason != "" {
+			last.Reason = reason
+		}
+	default:
+		last.Outcome = outcome
+		last.Reason = reason
 	}
 	if strings.TrimSpace(order.CheckoutID) != "" {
 		last.Checkout = order.CheckoutID
@@ -130,6 +150,10 @@ func finishMerchantAttempt(bill *models.Bill, key string, order procurement.Orde
 }
 
 func checkoutBlocksNewKey(bill *models.Bill, attempts []merchantAttempt) bool {
+	if len(attempts) > 0 && attempts[len(attempts)-1].Signed {
+		last := attempts[len(attempts)-1]
+		return !(last.Outcome == "expired" && authorizationLapsed(last.ValidBefore, time.Now()))
+	}
 	if bill == nil || strings.TrimSpace(bill.PorkbunCheckoutID) == "" {
 		return false
 	}
@@ -152,12 +176,70 @@ func legacyAttemptUsed(bill *models.Bill) bool {
 }
 
 func merchantAttemptUnusable(item merchantAttempt) bool {
+	if item.Signed {
+		return item.Outcome == "expired" && authorizationLapsed(item.ValidBefore, time.Now())
+	}
 	switch item.Outcome {
 	case "legacy", "no_402", "idempotency_mismatch", "insufficient_funds", "expired":
 		return true
 	default:
 		return false
 	}
+}
+
+// markAttemptSigned 在带签名的请求发出前把 checkout 和签名标记写入账单。
+// 保存失败时恢复内存，避免下一轮把没发出去的授权当成已经签过。
+func markAttemptSigned(bill *models.Bill, signed procurement.SignedCheckout) error {
+	if bill == nil {
+		return fmt.Errorf("bill is missing")
+	}
+	previousAttempts := bill.MerchantAttempts
+	previousCheckout := bill.PorkbunCheckoutID
+	attempts, err := parseMerchantAttempts(bill.MerchantAttempts)
+	if err != nil {
+		return err
+	}
+	if len(attempts) == 0 {
+		return fmt.Errorf("merchant attempt is missing")
+	}
+	last := &attempts[len(attempts)-1]
+	last.Signed = true
+	if last.Outcome == "" || last.Outcome == "started" {
+		last.Outcome = "signed"
+	}
+	if signed.ValidBefore > 0 {
+		last.ValidBefore = signed.ValidBefore
+	}
+	nonce := strings.TrimSpace(signed.Nonce)
+	if nonce != "" && nonce != "<nil>" {
+		last.Nonce = nonce
+	}
+	if id := strings.TrimSpace(signed.CheckoutID); id != "" {
+		last.Checkout = id
+		bill.PorkbunCheckoutID = id
+	}
+	if err := writeMerchantAttempts(bill, attempts); err != nil {
+		bill.MerchantAttempts = previousAttempts
+		bill.PorkbunCheckoutID = previousCheckout
+		return err
+	}
+	if err := models.SaveBill(bill); err != nil {
+		bill.MerchantAttempts = previousAttempts
+		bill.PorkbunCheckoutID = previousCheckout
+		return err
+	}
+	return nil
+}
+
+func merchantAttemptSigned(bill *models.Bill) bool {
+	if bill == nil {
+		return false
+	}
+	attempts, err := parseMerchantAttempts(bill.MerchantAttempts)
+	if err != nil || len(attempts) == 0 {
+		return false
+	}
+	return attempts[len(attempts)-1].Signed
 }
 
 func classifyMerchantAttempt(order procurement.Order, callErr error) (string, string) {
@@ -168,11 +250,11 @@ func classifyMerchantAttempt(order procurement.Order, callErr error) (string, st
 		return "idempotency_mismatch", reason
 	case code == "INSUFFICIENT_FUNDS":
 		return "insufficient_funds", reason
-	case checkoutExpired(order):
+	case code == "PAYMENT_EXPIRED":
 		return "expired", reason
 	case order.HTTPStatus == http.StatusPaymentRequired || code == "PAYMENT_REQUIRED" || strings.TrimSpace(order.Required) != "":
 		return "payment_required", reason
-	case code == "PAYMENT_PENDING" || code == "PAYMENT_IN_PROGRESS":
+	case code == "PAYMENT_PENDING" || code == "PAYMENT_IN_PROGRESS" || code == "IDEMPOTENCY_KEY_IN_USE":
 		return "pending", reason
 	case callErr == nil && (order.OrderID != "" || (order.HTTPStatus > 0 && order.HTTPStatus < 300)):
 		return "accepted", reason
@@ -185,9 +267,21 @@ func classifyMerchantAttempt(order procurement.Order, callErr error) (string, st
 	}
 }
 
-func checkoutExpired(order procurement.Order) bool {
-	blob := strings.ToUpper(order.Code + " " + order.Message + " " + order.Status)
-	return strings.Contains(blob, "EXPIR")
+func merchantPending(code string) bool {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "PAYMENT_PENDING", "PAYMENT_IN_PROGRESS", "IDEMPOTENCY_KEY_IN_USE":
+		return true
+	default:
+		return false
+	}
+}
+
+func paymentExpired(order procurement.Order) bool {
+	return strings.EqualFold(strings.TrimSpace(order.Code), "PAYMENT_EXPIRED")
+}
+
+func authorizationLapsed(validBefore int64, now time.Time) bool {
+	return validBefore > 0 && now.Unix() >= validBefore
 }
 
 func merchantReasonCode(err error, paid merchantResult) string {
@@ -200,14 +294,10 @@ func merchantReasonCode(err error, paid merchantResult) string {
 		return "merchant_idempotency_mismatch"
 	case "INSUFFICIENT_FUNDS":
 		return "merchant_insufficient_funds"
-	}
-	if strings.Contains(strings.ToUpper(paid.Code+" "+paid.Message), "EXPIR") {
+	case "PAYMENT_EXPIRED":
 		return "merchant_checkout_expired"
 	}
-	if paid.Required != "" || code == "PAYMENT_REQUIRED" {
-		return "x402_rejected"
-	}
-	if code != "" {
+	if code != "" && code != "PAYMENT_REQUIRED" {
 		return "merchant_" + strings.ToLower(code)
 	}
 	return "x402_rejected"
