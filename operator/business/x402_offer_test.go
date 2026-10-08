@@ -52,6 +52,9 @@ func TestMerchantFailureKeepsOfferAndReason(t *testing.T) {
 			var keys []string
 			header := base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[` + tc.accepts + `]}`))
 			pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePorkbunBalance(w, r) {
+					return
+				}
 				posts++
 				keys = append(keys, r.Header.Get("Idempotency-Key"))
 				if r.Header.Get("PAYMENT-SIGNATURE") != "" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/vincent-lxc/pulse-operator/operator/business"
@@ -193,6 +194,17 @@ func billMerchantReset(args []string) error {
 	configPath := fs.String("config", "config/dry-run.yaml", "operator config")
 	id := fs.String("id", "", "bill id")
 	yes := fs.Bool("yes", false, "confirm a new merchant attempt after the signed authorization has expired unused")
+	var expectedSet bool
+	var expected int64
+	fs.Func("expected-balance-cents", "Porkbun account balance in cents; only when the signed attempt has no recorded balance", func(s string) error {
+		n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+		if err != nil || n < 0 {
+			return fmt.Errorf("--expected-balance-cents must be a non-negative integer")
+		}
+		expected = n
+		expectedSet = true
+		return nil
+	})
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -203,7 +215,11 @@ func billMerchantReset(args []string) error {
 	if err != nil {
 		return err
 	}
-	row, err := business.MerchantReset(context.Background(), cfg, *id, *yes)
+	var expectedPtr *int64
+	if expectedSet {
+		expectedPtr = &expected
+	}
+	row, err := business.MerchantReset(context.Background(), cfg, *id, *yes, expectedPtr)
 	if row != nil {
 		fmt.Println(business.BillRunLine(row))
 	}

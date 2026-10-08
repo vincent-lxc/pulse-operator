@@ -15,13 +15,14 @@ import (
 	"github.com/vincent-lxc/pulse-operator/operator/treasury"
 )
 
-// MerchantReset 在四个条件都成立时，给已经签过的尝试再开一次新的尝试。
+// MerchantReset 在条件都成立时，给已经签过的尝试再开一次新的尝试。
+// expectedBalance 只用于签名时没有记下 Porkbun 余额的旧尝试。已经记下余额时拒绝这个参数。
 // 它不签名，也不碰金库和 burn。命令只在 CLI 里，管理接口没有这一条。
-func MerchantReset(ctx context.Context, cfg treasury.Config, id string, yes bool) (*models.Bill, error) {
-	return merchantResetAt(ctx, cfg, id, yes, time.Now())
+func MerchantReset(ctx context.Context, cfg treasury.Config, id string, yes bool, expectedBalance *int64) (*models.Bill, error) {
+	return merchantResetAt(ctx, cfg, id, yes, expectedBalance, time.Now())
 }
 
-func merchantResetAt(ctx context.Context, cfg treasury.Config, id string, yes bool, now time.Time) (*models.Bill, error) {
+func merchantResetAt(ctx context.Context, cfg treasury.Config, id string, yes bool, expectedBalance *int64, now time.Time) (*models.Bill, error) {
 	if !yes {
 		return nil, fmt.Errorf("bill merchant-reset requires --yes")
 	}
@@ -63,7 +64,18 @@ func merchantResetAt(ctx context.Context, cfg treasury.Config, id string, yes bo
 	if used {
 		return nil, fmt.Errorf("USDC authorization was already used")
 	}
-	if !last.BalanceKnown {
+	compare := last.BalanceCents
+	fromFlag := false
+	if expectedBalance != nil {
+		if last.BalanceKnown {
+			return nil, fmt.Errorf("--expected-balance-cents is only allowed when the attempt has no recorded balance")
+		}
+		if *expectedBalance < 0 {
+			return nil, fmt.Errorf("--expected-balance-cents must be a non-negative integer")
+		}
+		compare = *expectedBalance
+		fromFlag = true
+	} else if !last.BalanceKnown {
 		return nil, fmt.Errorf("account balance was not recorded at signing")
 	}
 	client, err := porkbunClient(cfg)
@@ -74,7 +86,10 @@ func merchantResetAt(ctx context.Context, cfg treasury.Config, id string, yes bo
 	if err != nil {
 		return nil, fmt.Errorf("account balance: %w", err)
 	}
-	if balance != last.BalanceCents {
+	if balance != compare {
+		if fromFlag {
+			return nil, fmt.Errorf("account balance does not match --expected-balance-cents")
+		}
 		return nil, fmt.Errorf("account balance changed since signing")
 	}
 	owned, err := client.AccountHasDomain(ctx, bill.Domain)
@@ -88,7 +103,16 @@ func merchantResetAt(ctx context.Context, cfg treasury.Config, id string, yes bo
 	fromN := last.N
 	nextN := last.N + 1
 	last.Outcome = "reset"
-	last.Reason = publicText("merchant-reset: authorization unused, balance unchanged, domain not in the account")
+	if fromFlag {
+		n := compare
+		last.ExpectedBalanceCents = &n
+		last.BalanceFromFlag = true
+		last.BalanceCents = n
+		last.BalanceKnown = true
+		last.Reason = publicText("merchant-reset: authorization unused, operator-supplied balance matched, domain not in the account")
+	} else {
+		last.Reason = publicText("merchant-reset: authorization unused, balance unchanged, domain not in the account")
+	}
 	attempts[len(attempts)-1] = last
 	attempts = append(attempts, merchantAttempt{
 		N: nextN, Key: merchantAttemptKey(bill.Code, nextN),
@@ -105,7 +129,7 @@ func merchantResetAt(ctx context.Context, cfg treasury.Config, id string, yes bo
 	if err := models.SaveBill(bill); err != nil {
 		return nil, err
 	}
-	if err := auditMerchantReset(cfg, bill, fromN, nextN, last.Key, merchantAttemptKey(bill.Code, nextN), last.BalanceCents); err != nil {
+	if err := auditMerchantReset(cfg, bill, fromN, nextN, last.Key, merchantAttemptKey(bill.Code, nextN), compare, fromFlag); err != nil {
 		return bill, err
 	}
 	return bill, nil
@@ -147,7 +171,7 @@ func resetUSDC(cfg treasury.Config) string {
 	return procurement.BaseSepoliaUSDC
 }
 
-func auditMerchantReset(cfg treasury.Config, bill *models.Bill, fromN, toN int, fromKey, toKey string, balance int64) error {
+func auditMerchantReset(cfg treasury.Config, bill *models.Bill, fromN, toN int, fromKey, toKey string, balance int64, fromFlag bool) error {
 	if strings.TrimSpace(cfg.AuditLog) == "" || bill == nil {
 		return nil
 	}
@@ -155,11 +179,16 @@ func auditMerchantReset(cfg treasury.Config, bill *models.Bill, fromN, toN int, 
 	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"action": "merchant_reset", "bill": bill.Code, "domain": bill.Domain,
 		"from_attempt": fromN, "to_attempt": toN, "from_key": fromKey, "to_key": toKey,
 		"balance_cents": balance, "authorization_unused": true,
-	})
+	}
+	if fromFlag {
+		payload["expected_balance_cents"] = balance
+		payload["balance_from_flag"] = true
+	}
+	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}

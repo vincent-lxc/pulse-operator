@@ -144,7 +144,7 @@ func TestLiveCheckoutDoesNotRotateOrResign(t *testing.T) {
 	var vaults, burns int
 	deps.vault = countVault(&vaults)
 	deps.burn = countBurn(&burns)
-	if err := AdvanceBill(context.Background(), bill, deps); err != nil || signatures != 0 || vaults != 0 || burns != 0 || len(keys) != 1 || keys[0] != merchantAttemptKey(bill.Code, 3) {
+	if err := AdvanceBill(context.Background(), bill, deps); err != nil || signatures != 0 || vaults != 0 || burns != 0 || len(keys) != 1 || keys[0] != merchantAttemptKey(bill.Code, 3)+"-confirm" {
 		t.Fatalf("keys=%v sig=%d vaults=%d burns=%d err=%v state=%s", keys, signatures, vaults, burns, err, bill.State)
 	}
 	if err := AdvanceBill(context.Background(), bill, deps); err != nil || signatures != 0 || len(keys) != 2 || keys[1] != keys[0] || strings.Count(bill.MerchantAttempts, `"n":`) != 1 {
@@ -185,7 +185,7 @@ func TestExpiredCheckoutTakesANewKey(t *testing.T) {
 	defer base.Close()
 	t.Setenv("BASE_RPC_URL", base.URL)
 	deps := merchantDeps(t, pork.URL, payer)
-	if err := AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_checkout_expired" || signatures != 0 || len(keys) != 1 || keys[0] != merchantAttemptKey(bill.Code, 1) {
+	if err := AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_checkout_expired" || signatures != 0 || len(keys) != 1 || keys[0] != merchantAttemptKey(bill.Code, 1)+"-confirm" {
 		t.Fatalf("first code=%s keys=%v sig=%d err=%v", bill.ReasonCode, keys, signatures, err)
 	}
 	if err := AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_insufficient_funds" || signatures != 0 || len(keys) != 2 || keys[1] != merchantAttemptKey(bill.Code, 2) || bill.PorkbunCheckoutID != "" {
@@ -355,10 +355,9 @@ func TestSignedRequestFailureSignsOnce(t *testing.T) {
 				t.Fatalf("retry state=%s code=%s checkout=%s sig=%d keys=%v err=%v attempts=%s", bill.State, bill.ReasonCode, bill.PorkbunCheckoutID, signatures, keys, err, bill.MerchantAttempts)
 			}
 			want := merchantAttemptKey(bill.Code, 1)
-			for _, key := range keys {
-				if key != want {
-					t.Fatalf("rotated keys=%v", keys)
-				}
+			confirm := want + "-confirm"
+			if len(keys) != 3 || keys[0] != want || keys[1] != want || keys[2] != confirm {
+				t.Fatalf("keys=%v", keys)
 			}
 			if strings.Count(bill.MerchantAttempts, `"n":`) != 1 || !strings.Contains(bill.MerchantAttempts, `"signed":true`) {
 				t.Fatalf("attempts %s", bill.MerchantAttempts)
@@ -411,10 +410,8 @@ func TestFresh402AfterSignedNeedsReview(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "checkout_needs_review") || bill.ReasonCode != "checkout_needs_review" || bill.State != "failed_merchant" || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" {
 		t.Fatalf("state=%s code=%s checkout=%s sig=%d err=%v", bill.State, bill.ReasonCode, bill.PorkbunCheckoutID, signatures, err)
 	}
-	for _, key := range keys {
-		if key != want {
-			t.Fatalf("keys=%v", keys)
-		}
+	if len(keys) != 3 || keys[0] != want || keys[1] != want || keys[2] != want+"-confirm" {
+		t.Fatalf("keys=%v", keys)
 	}
 	if strings.Count(bill.MerchantAttempts, `"n":`) != 1 {
 		t.Fatalf("attempts %s", bill.MerchantAttempts)
@@ -483,12 +480,13 @@ func TestSignedThenExpiredAllowsOneNewAttempt(t *testing.T) {
 		t.Fatalf("marker %+v err=%v", attempts, err)
 	}
 	phase = "expired"
-	if err = AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_checkout_expired" || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" || strings.Count(bill.MerchantAttempts, `"n":`) != 1 {
-		t.Fatalf("future expiry code=%s checkout=%s sig=%d err=%v attempts=%s", bill.ReasonCode, bill.PorkbunCheckoutID, signatures, err, bill.MerchantAttempts)
+	confirm := merchantAttemptKey(bill.Code, 1) + "-confirm"
+	if err = AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_checkout_expired" || signatures != 1 || bill.PorkbunCheckoutID != "chk-1" || strings.Count(bill.MerchantAttempts, `"n":`) != 1 || keys[len(keys)-1] != confirm {
+		t.Fatalf("future expiry code=%s checkout=%s sig=%d keys=%v err=%v attempts=%s", bill.ReasonCode, bill.PorkbunCheckoutID, signatures, keys, err, bill.MerchantAttempts)
 	}
 	patchValidBefore(t, bill, time.Now().Unix()-30)
-	if err = AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_checkout_expired" || signatures != 1 || strings.Count(bill.MerchantAttempts, `"n":`) != 1 || !strings.Contains(bill.MerchantAttempts, `"outcome":"expired"`) {
-		t.Fatalf("lapsed expiry code=%s sig=%d err=%v attempts=%s", bill.ReasonCode, signatures, err, bill.MerchantAttempts)
+	if err = AdvanceBill(context.Background(), bill, deps); bill.ReasonCode != "merchant_checkout_expired" || signatures != 1 || strings.Count(bill.MerchantAttempts, `"n":`) != 1 || !strings.Contains(bill.MerchantAttempts, `"outcome":"expired"`) || keys[len(keys)-1] != confirm {
+		t.Fatalf("lapsed expiry code=%s sig=%d keys=%v err=%v attempts=%s", bill.ReasonCode, signatures, err, keys, bill.MerchantAttempts)
 	}
 	phase = "new"
 	if err = AdvanceBill(context.Background(), bill, deps); err != nil || signatures != 2 || vaults != 0 || burns != 0 || bill.State != "done" || bill.PorkbunOrderID != "ord-2" {
@@ -547,10 +545,9 @@ func TestLapsedAuthorizationWithoutPaymentExpiredDoesNotRotate(t *testing.T) {
 		t.Fatalf("retry sig=%d err=%v attempts=%s keys=%v", signatures, err, bill.MerchantAttempts, keys)
 	}
 	want := merchantAttemptKey(bill.Code, 1)
-	for _, key := range keys {
-		if key != want {
-			t.Fatalf("keys=%v", keys)
-		}
+	confirm := want + "-confirm"
+	if len(keys) != 4 || keys[0] != want || keys[1] != want || keys[2] != confirm || keys[3] != confirm {
+		t.Fatalf("keys=%v", keys)
 	}
 }
 
@@ -593,6 +590,62 @@ func TestExpirySubstringDoesNotOpenANewAttempt(t *testing.T) {
 				t.Fatalf("second code=%s keys=%v checkout=%s sig=%d err=%v", bill.ReasonCode, keys, bill.PorkbunCheckoutID, signatures, err)
 			}
 		})
+	}
+}
+
+func TestAccountBalanceReadFailureDoesNotSign(t *testing.T) {
+	if err := models.EnsureStorage(); err != nil {
+		t.Fatal(err)
+	}
+	_, payer := testPayer(t)
+	code := "bill-balance-" + strings.ReplaceAll(t.Name(), "/", "-")
+	var keys []string
+	var signatures int
+	var balanceReads int
+	pork := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/account/balance") {
+			balanceReads++
+			w.Header().Set("Content-Type", "application/json")
+			if balanceReads == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = io.WriteString(w, `{"status":"ERROR","message":"down"}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"status":"SUCCESS","balance":4400}`)
+			return
+		}
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			signatures++
+			stored, err := models.FindBill(code)
+			if err != nil || stored == nil || !strings.Contains(stored.MerchantAttempts, `"balance_known":true`) || !strings.Contains(stored.MerchantAttempts, `"balance_cents":4400`) || strings.Contains(stored.MerchantAttempts, r.Header.Get("PAYMENT-SIGNATURE")) {
+				attempts := ""
+				if stored != nil {
+					attempts = stored.MerchantAttempts
+				}
+				t.Errorf("balance missing before signed post attempts=%s err=%v", attempts, err)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, `{"status":"SUCCESS","orderId":"ord-bal","checkoutId":"chk-bal"}`)
+			return
+		}
+		w.Header().Set("PAYMENT-REQUIRED", exactOfferHeader())
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = io.WriteString(w, `{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-bal"}`)
+	}))
+	defer pork.Close()
+	base := balanceServer(t)
+	defer base.Close()
+	t.Setenv("BASE_RPC_URL", base.URL)
+	bill := bridgedBill(t, code)
+	deps := merchantDeps(t, pork.URL, payer)
+	err := AdvanceBill(context.Background(), bill, deps)
+	want := merchantAttemptKey(bill.Code, 1)
+	if err == nil || !strings.Contains(err.Error(), "account balance") || signatures != 0 || len(keys) != 1 || keys[0] != want || strings.Contains(bill.MerchantAttempts, `"signed":true`) || bill.PorkbunCheckoutID != "" {
+		t.Fatalf("err=%v sig=%d keys=%v checkout=%s attempts=%s", err, signatures, keys, bill.PorkbunCheckoutID, bill.MerchantAttempts)
+	}
+	if err = AdvanceBill(context.Background(), bill, deps); err != nil || signatures != 1 || len(keys) != 3 || keys[1] != want || keys[2] != want || strings.Count(bill.MerchantAttempts, `"n":`) != 1 || !strings.Contains(bill.MerchantAttempts, `"signed":true`) || !strings.Contains(bill.MerchantAttempts, `"balance_known":true`) || !strings.Contains(bill.MerchantAttempts, `"balance_cents":4400`) {
+		t.Fatalf("retry err=%v sig=%d keys=%v attempts=%s", err, signatures, keys, bill.MerchantAttempts)
 	}
 }
 

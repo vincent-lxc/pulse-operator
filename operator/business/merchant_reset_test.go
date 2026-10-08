@@ -57,7 +57,7 @@ func TestMerchantResetRefusesUntilEveryCheckPasses(t *testing.T) {
 			bill, cfg, vault, burn := resetBill(t, payer, nonce, tc.signed, tc.known, tc.validBefore, tc.auth, tc.authMissing, tc.balanceCode, tc.balanceBody, tc.listCode, &listBody)
 			before := bill.MerchantAttempts
 			checkout := bill.PorkbunCheckoutID
-			row, err := merchantResetAt(context.Background(), cfg, bill.Code, tc.yes, tc.when)
+			row, err := merchantResetAt(context.Background(), cfg, bill.Code, tc.yes, nil, tc.when)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err %v", err)
 			}
@@ -85,7 +85,7 @@ func TestMerchantResetOpensTheNextAttemptWhenEveryCheckPasses(t *testing.T) {
 	listBody := `{"status":"SUCCESS","domains":[]}`
 	bill, cfg, vault, burn := resetBill(t, payer, nonce, true, true, past, big.NewInt(0), false, 200, `{"status":"SUCCESS","balance":4400}`, 200, &listBody)
 	mint := bill.BaseMintTx
-	row, err := merchantResetAt(context.Background(), cfg, bill.Code, true, time.Unix(past+100, 0))
+	row, err := merchantResetAt(context.Background(), cfg, bill.Code, true, nil, time.Unix(past+100, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +102,88 @@ func TestMerchantResetOpensTheNextAttemptWhenEveryCheckPasses(t *testing.T) {
 	text, err := os.ReadFile(cfg.AuditLog)
 	if err != nil || !strings.Contains(string(text), `"kind":"merchant_reset"`) || !strings.Contains(string(text), want) || strings.Contains(string(text), "pk1_resettest") || strings.Contains(string(text), nonce) {
 		t.Fatalf("audit %v %s", err, text)
+	}
+}
+
+func TestMerchantResetLegacyBalanceFlag(t *testing.T) {
+	if err := models.EnsureStorage(); err != nil {
+		t.Fatal(err)
+	}
+	payer := "0x3333333333333333333333333333333333333333"
+	nonce := "0x" + strings.Repeat("ab", 32)
+	past := int64(1_700_000_000)
+	now := time.Unix(past+100, 0)
+	match := int64(4400)
+
+	t.Run("accepted", func(t *testing.T) {
+		listBody := `{"status":"SUCCESS","domains":[]}`
+		bill, cfg, vault, burn := resetBill(t, payer, nonce, true, false, past, big.NewInt(0), false, 200, `{"status":"SUCCESS","balance":4400}`, 200, &listBody)
+		clearAttemptPayer(t, bill)
+		row, err := merchantResetAt(context.Background(), cfg, bill.Code, true, &match, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := merchantAttemptKey(bill.Code, 3)
+		if row.PorkbunCheckoutID != "" || row.VaultTx != vault || row.CCTPBurnTx != burn {
+			t.Fatalf("checkout=%s vault=%s burn=%s", row.PorkbunCheckoutID, row.VaultTx, row.CCTPBurnTx)
+		}
+		if !strings.Contains(row.MerchantAttempts, `"balance_from_flag":true`) || !strings.Contains(row.MerchantAttempts, `"expected_balance_cents":4400`) || !strings.Contains(row.MerchantAttempts, want) {
+			t.Fatalf("attempts %s", row.MerchantAttempts)
+		}
+		text, err := os.ReadFile(cfg.AuditLog)
+		if err != nil || !strings.Contains(string(text), `"balance_from_flag":true`) || !strings.Contains(string(text), `"expected_balance_cents":4400`) || !strings.Contains(string(text), want) || strings.Contains(string(text), nonce) || strings.Contains(string(text), "pk1_resettest") {
+			t.Fatalf("audit %v %s", err, text)
+		}
+	})
+
+	t.Run("balance differs", func(t *testing.T) {
+		listBody := `{"status":"SUCCESS","domains":[]}`
+		bill, cfg, _, _ := resetBill(t, payer, nonce, true, false, past, big.NewInt(0), false, 200, `{"status":"SUCCESS","balance":1}`, 200, &listBody)
+		clearAttemptPayer(t, bill)
+		before := bill.MerchantAttempts
+		_, err := merchantResetAt(context.Background(), cfg, bill.Code, true, &match, now)
+		if err == nil || !strings.Contains(err.Error(), "does not match --expected-balance-cents") {
+			t.Fatalf("err %v", err)
+		}
+		saved, err := models.FindBill(bill.Code)
+		if err != nil || saved == nil || saved.MerchantAttempts != before || strings.Contains(saved.MerchantAttempts, "opened by merchant-reset") {
+			t.Fatalf("attempts %s err=%v", saved.MerchantAttempts, err)
+		}
+		if text, readErr := os.ReadFile(cfg.AuditLog); readErr == nil && strings.Contains(string(text), "merchant_reset") {
+			t.Fatalf("audit recorded a refused reset: %s", text)
+		}
+	})
+
+	t.Run("refused when balance was recorded", func(t *testing.T) {
+		listBody := `{"status":"SUCCESS","domains":[]}`
+		bill, cfg, _, _ := resetBill(t, payer, nonce, true, true, past, big.NewInt(0), false, 200, `{"status":"SUCCESS","balance":4400}`, 200, &listBody)
+		before := bill.MerchantAttempts
+		_, err := merchantResetAt(context.Background(), cfg, bill.Code, true, &match, now)
+		if err == nil || !strings.Contains(err.Error(), "only allowed when the attempt has no recorded balance") {
+			t.Fatalf("err %v", err)
+		}
+		saved, err := models.FindBill(bill.Code)
+		if err != nil || saved == nil || saved.MerchantAttempts != before {
+			t.Fatalf("attempts %s err=%v", saved.MerchantAttempts, err)
+		}
+		if text, readErr := os.ReadFile(cfg.AuditLog); readErr == nil && strings.Contains(string(text), "merchant_reset") {
+			t.Fatalf("audit recorded a refused reset: %s", text)
+		}
+	})
+}
+
+func clearAttemptPayer(t *testing.T, bill *models.Bill) {
+	t.Helper()
+	attempts, err := parseMerchantAttempts(bill.MerchantAttempts)
+	if err != nil || len(attempts) == 0 {
+		t.Fatal(err)
+	}
+	attempts[0].Payer = ""
+	if err = writeMerchantAttempts(bill, attempts); err != nil {
+		t.Fatal(err)
+	}
+	if err = models.SaveBill(bill); err != nil {
+		t.Fatal(err)
 	}
 }
 

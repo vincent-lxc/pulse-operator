@@ -32,17 +32,6 @@ func porkbunClient(cfg treasury.Config) (*procurement.Porkbun, error) {
 	return &procurement.Porkbun{BaseURL: cfg.Porkbun.APIBase, APIKey: apiKey, Secret: secret}, nil
 }
 
-func porkbunBalanceAtSign(ctx context.Context, client *procurement.Porkbun) (int64, bool) {
-	if client == nil {
-		return 0, false
-	}
-	cents, err := client.AccountBalance(ctx)
-	if err != nil {
-		return 0, false
-	}
-	return cents, true
-}
-
 func liveDeps(ctx context.Context, cfg treasury.Config, deps billDeps) (billDeps, error) {
 	client, err := porkbunClient(cfg)
 	if err != nil {
@@ -316,13 +305,28 @@ func liveMerchant(ctx context.Context, cfg treasury.Config, client *procurement.
 			return merchantResult{}, err
 		}
 	}
+	var signedBalance int64
+	var signedBalanceKnown bool
 	order, err := procurement.Collect(ctx, client, procurement.CollectInput{
 		Domain: bill.Domain, Kind: bill.Kind, CostCents: bill.QuoteCents, Years: bill.Years,
 		CheckoutID: bill.PorkbunCheckoutID, Idempotency: key,
 		Network: network, Asset: asset, Now: time.Now().UTC(), Sign: sign,
+		BeforeSign: func() error {
+			if client == nil {
+				return fmt.Errorf("account balance: porkbun client is missing")
+			}
+			cents, balErr := client.AccountBalance(ctx)
+			if balErr != nil {
+				return fmt.Errorf("account balance: %w", balErr)
+			}
+			if saveErr := recordAttemptBalance(bill, cents); saveErr != nil {
+				return saveErr
+			}
+			signedBalance, signedBalanceKnown = cents, true
+			return nil
+		},
 		OnSigned: func(signed procurement.SignedCheckout) error {
-			cents, known := porkbunBalanceAtSign(ctx, client)
-			return markAttemptSigned(bill, signed, cents, known)
+			return markAttemptSigned(bill, signed, signedBalance, signedBalanceKnown)
 		},
 	})
 	if finishErr := finishMerchantAttempt(bill, key, order, err); finishErr != nil && err == nil {

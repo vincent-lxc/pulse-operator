@@ -91,7 +91,7 @@ func TestStoredCheckoutDoesNotSignWhenPaymentRequiredAgain(t *testing.T) {
 		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
 			signed++
 		}
-		if r.Header.Get("Idempotency-Key") != "bill-pulse-xyz" {
+		if r.Header.Get("Idempotency-Key") != "bill-pulse-xyz-confirm" {
 			t.Errorf("idempotency %q", r.Header.Get("Idempotency-Key"))
 		}
 		body, _ := io.ReadAll(r.Body)
@@ -285,28 +285,92 @@ func TestSignedRetryBodyMatchesThe402Request(t *testing.T) {
 
 func TestPollSendsCheckoutWithPayWith(t *testing.T) {
 	var body []byte
+	var keys []string
 	var signed string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ = io.ReadAll(r.Body)
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
 		signed = r.Header.Get("PAYMENT-SIGNATURE")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"SUCCESS","code":"PAYMENT_PENDING","checkoutId":"chk-1"}`))
 	}))
 	defer srv.Close()
 	client := &Porkbun{BaseURL: srv.URL, APIKey: "pk1_poll", Secret: "sk1_poll", MinInterval: -1}
-	order, err := Collect(context.Background(), client, CollectInput{
+	in := CollectInput{
 		Domain: "pulse.xyz", Kind: "domain_register", CostCents: 204, CheckoutID: "chk-1",
 		Idempotency: "bill-pulse-xyz",
 		Sign: func(Accept, time.Time) (Payment, error) {
 			t.Fatal("signed during poll")
 			return Payment{}, nil
 		},
-	})
+	}
+	order, err := Collect(context.Background(), client, in)
 	if err != nil || order.Code != "PAYMENT_PENDING" || signed != "" {
 		t.Fatalf("err=%v order=%+v sig=%q", err, order, signed)
 	}
+	order, err = Collect(context.Background(), client, in)
+	if err != nil || order.Code != "PAYMENT_PENDING" || signed != "" {
+		t.Fatalf("second err=%v order=%+v sig=%q", err, order, signed)
+	}
+	if len(keys) != 2 || keys[0] != "bill-pulse-xyz-confirm" || keys[1] != keys[0] {
+		t.Fatalf("poll keys %v", keys)
+	}
 	if !bytes.Contains(body, []byte(`"payWith":"usdc"`)) || !bytes.Contains(body, []byte(`"usdcCheckoutId":"chk-1"`)) || !bytes.Contains(body, []byte(`"agreeToTerms":"yes"`)) {
 		t.Fatalf("poll body %s", body)
+	}
+}
+
+func TestPollWithEmptyKeyOmitsIdempotencyHeader(t *testing.T) {
+	var present bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, present = r.Header["Idempotency-Key"]
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			t.Error("signed during poll")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"SUCCESS","code":"PAYMENT_PENDING","checkoutId":"chk-1"}`))
+	}))
+	defer srv.Close()
+	client := &Porkbun{BaseURL: srv.URL, MinInterval: -1}
+	_, err := Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", CostCents: 204, CheckoutID: "chk-1",
+		Sign: func(Accept, time.Time) (Payment, error) {
+			t.Fatal("signed during poll")
+			return Payment{}, nil
+		},
+	})
+	if err != nil || present {
+		t.Fatalf("err=%v header present=%v", err, present)
+	}
+}
+
+func TestCollectDoesNotSignWhenBeforeSignFails(t *testing.T) {
+	var signs, signedPosts int
+	required := base64.StdEncoding.EncodeToString([]byte(`{"x402Version":2,"accepts":[{"scheme":"exact","network":"eip155:84532","amount":"2040000","asset":"0x036CbD53842c5426634e7929541eC2318f3dCF7e","payTo":"0x1111111111111111111111111111111111111111","maxTimeoutSeconds":300,"extra":{"name":"USDC","version":"2"}}]}`))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("PAYMENT-SIGNATURE") != "" {
+			signedPosts++
+		}
+		w.Header().Set("PAYMENT-REQUIRED", required)
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"status":"ERROR","code":"PAYMENT_REQUIRED","checkoutId":"chk-1"}`))
+	}))
+	defer srv.Close()
+	client := &Porkbun{BaseURL: srv.URL, MinInterval: -1}
+	order, err := Collect(context.Background(), client, CollectInput{
+		Domain: "pulse.xyz", Kind: "domain_register", CostCents: 204,
+		Network: "eip155:84532", Asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+		Idempotency: "bill-pulse-xyz",
+		BeforeSign: func() error {
+			return errString("account balance: down")
+		},
+		Sign: func(Accept, time.Time) (Payment, error) {
+			signs++
+			return Payment{Header: "signed-header"}, nil
+		},
+	})
+	if err == nil || err.Error() != "account balance: down" || signs != 0 || signedPosts != 0 || order.CheckoutID != "chk-1" {
+		t.Fatalf("err=%v signs=%d posts=%d checkout=%s", err, signs, signedPosts, order.CheckoutID)
 	}
 }
 

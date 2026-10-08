@@ -22,6 +22,7 @@ type SignedCheckout struct {
 }
 
 // CollectInput 是一次域名付款。
+// BeforeSign 在签名之前调用。它返回错误时不签名，也不提交。
 // OnSigned 在签名成功后、带 PAYMENT-SIGNATURE 的请求发出前调用。
 // 它返回错误时不再提交签名。
 type CollectInput struct {
@@ -35,6 +36,7 @@ type CollectInput struct {
 	Asset       string
 	Now         time.Time
 	Sign        func(Accept, time.Time) (Payment, error)
+	BeforeSign  func() error
 	OnSigned    func(SignedCheckout) error
 }
 
@@ -44,13 +46,19 @@ func Collect(ctx context.Context, client *Porkbun, in CollectInput) (Order, erro
 		return Order{}, errString("porkbun client is missing")
 	}
 	renew := strings.Contains(in.Kind, "renew")
-	call := func(checkout, signature string) (Order, error) {
+	call := func(checkout, signature, idem string) (Order, error) {
 		if renew {
-			return client.Renew(ctx, in.Domain, in.CostCents, in.Years, false, checkout, in.Idempotency, signature)
+			return client.Renew(ctx, in.Domain, in.CostCents, in.Years, false, checkout, idem, signature)
 		}
-		return client.Create(ctx, in.Domain, in.CostCents, in.Years, false, checkout, in.Idempotency, signature)
+		return client.Create(ctx, in.Domain, in.CostCents, in.Years, false, checkout, idem, signature)
 	}
-	order, err := call(in.CheckoutID, "")
+	// 带 usdcCheckoutId 的确认轮询不能复用签名重试的 Idempotency-Key。
+	// Porkbun 在第一次非 402 应答后缓存那个键，随后的轮询会得到 IDEMPOTENCY_KEY_MISMATCH。
+	idem := in.Idempotency
+	if strings.TrimSpace(in.CheckoutID) != "" {
+		idem = confirmIdempotencyKey(in.Idempotency)
+	}
+	order, err := call(in.CheckoutID, "", idem)
 	if paymentInFlight(order.Code) {
 		return order, nil
 	}
@@ -95,6 +103,11 @@ func Collect(ctx context.Context, client *Porkbun, in CollectInput) (Order, erro
 	if new(big.Int).Set(amount).Cmp(mustInt(item.Amount)) != 0 {
 		return order, errString("x402 amount diverged from the bill")
 	}
+	if in.BeforeSign != nil {
+		if hookErr := in.BeforeSign(); hookErr != nil {
+			return order, hookErr
+		}
+	}
 	payment, err := in.Sign(item, in.Now)
 	if err != nil {
 		return order, err
@@ -109,13 +122,22 @@ func Collect(ctx context.Context, client *Porkbun, in CollectInput) (Order, erro
 			return order, hookErr
 		}
 	}
-	// 签名重试必须和触发 402 的请求体完全相同：payWith:usdc，不带 usdcCheckoutId。
-	signed, err := call("", payment.Header)
+	// 签名重试必须和触发 402 的请求体完全相同：payWith:usdc，不带 usdcCheckoutId，同一个 Idempotency-Key。
+	signed, err := call("", payment.Header, in.Idempotency)
 	signed = keepCheckout(signed, order)
 	if err != nil && !paymentInFlight(signed.Code) {
 		return signed, err
 	}
 	return signed, nil
+}
+
+// confirmIdempotencyKey 是确认轮询的键。空键保持为空，请求不带 Idempotency-Key。
+func confirmIdempotencyKey(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	return key + "-confirm"
 }
 
 func keepCheckout(signed, first Order) Order {

@@ -16,18 +16,20 @@ import (
 // Signed 为真表示授权已经签好，并且在带签名的请求发出前落了库。
 // ValidBefore 和 Nonce 是 authorization 里的字段，不是签名，也不是密钥。
 type merchantAttempt struct {
-	N            int    `json:"n"`
-	Key          string `json:"key"`
-	At           string `json:"at"`
-	Outcome      string `json:"outcome"`
-	Reason       string `json:"reason,omitempty"`
-	Checkout     string `json:"checkout,omitempty"`
-	Signed       bool   `json:"signed,omitempty"`
-	ValidBefore  int64  `json:"valid_before,omitempty"`
-	Nonce        string `json:"nonce,omitempty"`
-	Payer        string `json:"payer,omitempty"`
-	BalanceCents int64  `json:"balance_cents,omitempty"`
-	BalanceKnown bool   `json:"balance_known,omitempty"`
+	N                    int    `json:"n"`
+	Key                  string `json:"key"`
+	At                   string `json:"at"`
+	Outcome              string `json:"outcome"`
+	Reason               string `json:"reason,omitempty"`
+	Checkout             string `json:"checkout,omitempty"`
+	Signed               bool   `json:"signed,omitempty"`
+	ValidBefore          int64  `json:"valid_before,omitempty"`
+	Nonce                string `json:"nonce,omitempty"`
+	Payer                string `json:"payer,omitempty"`
+	BalanceCents         int64  `json:"balance_cents,omitempty"`
+	BalanceKnown         bool   `json:"balance_known,omitempty"`
+	ExpectedBalanceCents *int64 `json:"expected_balance_cents,omitempty"`
+	BalanceFromFlag      bool   `json:"balance_from_flag,omitempty"`
 }
 
 func legacyMerchantKey(code string) string {
@@ -236,6 +238,33 @@ func markAttemptSigned(bill *models.Bill, signed procurement.SignedCheckout, bal
 	if err := models.SaveBill(bill); err != nil {
 		bill.MerchantAttempts = previousAttempts
 		bill.PorkbunCheckoutID = previousCheckout
+		return err
+	}
+	return nil
+}
+
+// recordAttemptBalance 在签名前把 Porkbun 账户余额写入当前尝试。失败时不签名。
+func recordAttemptBalance(bill *models.Bill, cents int64) error {
+	if bill == nil {
+		return fmt.Errorf("bill is missing")
+	}
+	previous := bill.MerchantAttempts
+	attempts, err := parseMerchantAttempts(bill.MerchantAttempts)
+	if err != nil {
+		return err
+	}
+	if len(attempts) == 0 {
+		return fmt.Errorf("merchant attempt is missing")
+	}
+	last := &attempts[len(attempts)-1]
+	last.BalanceCents = cents
+	last.BalanceKnown = true
+	if err := writeMerchantAttempts(bill, attempts); err != nil {
+		bill.MerchantAttempts = previous
+		return err
+	}
+	if err := models.SaveBill(bill); err != nil {
+		bill.MerchantAttempts = previous
 		return err
 	}
 	return nil
