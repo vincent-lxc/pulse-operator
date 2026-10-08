@@ -29,6 +29,17 @@ const (
 	// 这个地址在 Arc 测试网是 PolicyVault，在 Arc 主网是 PulseReceipt，不能当主网金库。
 	TestnetPolicyVault = "0x4FACE6592Ba1AdF83E35B01CcD93D8704d647C01"
 
+	// Commerce Payments v1.0.0，Base 主网和 Base Sepolia 同一组地址。
+	// https://github.com/base/commerce-payments/releases/tag/v1.0.0
+	// PaymentInfo / getHash：https://github.com/base/commerce-payments/blob/v1.0.0/src/AuthCaptureEscrow.sol
+	// 2026-10-08 用 https://mainnet.base.org 对 chain id 8453 做 eth_getCode，两处都有字节码。
+	// PAYMENT_INFO_TYPEHASH() 返回 0xae68ac7ce30c86ece8196b61a7c486d8f0061f575037fbd34e7fe4e2820c6591。
+	AuthCaptureEscrowV10 = "0xBdEA0D1bcC5966192B070Fdf62aB4EF5b4420cff"
+	EIP3009CollectorV10  = "0x0E3dF9510de65469C4518D7843919c0b8C7A7757"
+
+	// Commerce Payments v1.1.0。PaymentInfo 类型串和 getHash 与 v1.0.0 相同。
+	// https://github.com/base/commerce-payments/releases/tag/v1.1.0
+	// 同一天的 eth_getCode / PAYMENT_INFO_TYPEHASH() 与 v1.0 的类型哈希一致。
 	AuthCaptureEscrowV11 = "0xf96815976523E00e65Be8f34cA5e64b4f41EB19c"
 	EIP3009CollectorV11  = "0x8612dfdc421f80336cd14E8EF9cb1E765dB5ab88"
 

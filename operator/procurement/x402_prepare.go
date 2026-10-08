@@ -89,8 +89,12 @@ func authCaptureParts(payer common.Address, item Accept, now time.Time) (map[str
 	if escrow == "" {
 		escrow = AuthCaptureEscrowV11
 	}
-	if !sameAddr(escrow, AuthCaptureEscrowV11) {
-		return nil, nil, fmt.Errorf("auth-capture escrow %s is not the v1.1 deployment", escrow)
+	collector, err := pairedCollector(escrow)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := rejectMismatchedCollector(item.Extra, collector); err != nil {
+		return nil, nil, err
 	}
 	operator := extraString(item, "captureAuthorizer")
 	if !common.IsHexAddress(operator) {
@@ -122,7 +126,7 @@ func authCaptureParts(payer common.Address, item Accept, now time.Time) (map[str
 		return nil, nil, err
 	}
 	auth := map[string]any{
-		"from": payer.Hex(), "to": common.HexToAddress(EIP3009CollectorV11).Hex(), "value": item.Amount,
+		"from": payer.Hex(), "to": collector.Hex(), "value": item.Amount,
 		"validAfter": "0", "validBefore": fmt.Sprintf("%d", pre), "nonce": nonce.Hex(),
 	}
 	extra := map[string]any{"salt": common.BytesToHash(salt.Bytes()).Hex()}
@@ -130,6 +134,56 @@ func authCaptureParts(payer common.Address, item Accept, now time.Time) (map[str
 		extra["saltNonce"] = saltNonce.Hex()
 	}
 	return auth, extra, nil
+}
+
+func pairedCollector(escrow string) (common.Address, error) {
+	switch common.HexToAddress(escrow) {
+	case common.HexToAddress(AuthCaptureEscrowV10):
+		return common.HexToAddress(EIP3009CollectorV10), nil
+	case common.HexToAddress(AuthCaptureEscrowV11):
+		return common.HexToAddress(EIP3009CollectorV11), nil
+	default:
+		return common.Address{}, fmt.Errorf("%w: auth-capture escrow %s is not an allowlisted Commerce Payments deployment", ErrUnsupportedEscrow, common.HexToAddress(escrow).Hex())
+	}
+}
+
+func rejectMismatchedCollector(extra map[string]any, want common.Address) error {
+	var bad common.Address
+	walkExtra(extra, func(addr common.Address) {
+		if knownEIP3009Collector(addr) && addr != want {
+			bad = addr
+		}
+	})
+	if bad != (common.Address{}) {
+		return fmt.Errorf("%w: auth-capture collector %s does not match escrow collector %s", ErrUnsupportedEscrow, bad.Hex(), want.Hex())
+	}
+	return nil
+}
+
+func knownEIP3009Collector(addr common.Address) bool {
+	switch addr {
+	case common.HexToAddress(EIP3009CollectorV10), common.HexToAddress(EIP3009CollectorV11):
+		return true
+	default:
+		return false
+	}
+}
+
+func walkExtra(v any, visit func(common.Address)) {
+	switch n := v.(type) {
+	case string:
+		if common.IsHexAddress(n) {
+			visit(common.HexToAddress(n))
+		}
+	case map[string]any:
+		for _, child := range n {
+			walkExtra(child, visit)
+		}
+	case []any:
+		for _, child := range n {
+			walkExtra(child, visit)
+		}
+	}
 }
 
 // FinishPayment 用外部签名拼出 PAYMENT-SIGNATURE。恢复出的地址必须等于付款人。

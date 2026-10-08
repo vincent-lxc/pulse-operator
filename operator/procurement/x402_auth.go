@@ -39,8 +39,13 @@ func paymentSalt(receiverAuthorizer, policy string, saltNonce common.Hash) (*big
 	return new(big.Int).SetBytes(crypto.Keccak256(packed)), true, nil
 }
 
+// paymentInfoTypehash 是 v1.0.0 与 v1.1.0 AuthCaptureEscrow.PAYMENT_INFO_TYPEHASH。
+// 两边的 getHash 都是 keccak256(abi.encode(chainid, address(this), keccak256(abi.encode(typehash, paymentInfo))))。
+// ERC-3009 nonce 用 payer 置零后的 getHash，见 TokenCollector._getHashPayerAgnostic。
+const paymentInfoType = "PaymentInfo(address operator,address payer,address receiver,address token,uint120 maxAmount,uint48 preApprovalExpiry,uint48 authorizationExpiry,uint48 refundExpiry,uint16 minFeeBps,uint16 maxFeeBps,address feeReceiver,uint256 salt)"
+
 func signatureNonce(chainID int64, escrow common.Address, info paymentInfo) (common.Hash, error) {
-	typehash := crypto.Keccak256Hash([]byte("PaymentInfo(address operator,address payer,address receiver,address token,uint120 maxAmount,uint48 preApprovalExpiry,uint48 authorizationExpiry,uint48 refundExpiry,uint16 minFeeBps,uint16 maxFeeBps,address feeReceiver,uint256 salt)"))
+	typehash := crypto.Keccak256Hash([]byte(paymentInfoType))
 	packed, err := abiEncode(
 		typehash,
 		info.Operator,

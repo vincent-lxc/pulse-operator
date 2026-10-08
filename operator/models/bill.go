@@ -44,6 +44,7 @@ type Bill struct {
 	X402Scheme          string `json:"x402_scheme" desc:"x402 方案"`
 	X402Payer           string `json:"x402_payer" desc:"x402 付款人"`
 	X402Receipt         string `json:"x402_receipt" desc:"x402 回执"`
+	X402Required        string `json:"x402_required" desc:"x402 付款要求"`
 	PorkbunCheckoutID   string `json:"porkbun_checkout_id" desc:"Porkbun checkout"`
 	PorkbunOrderID      string `json:"porkbun_order_id" desc:"Porkbun 订单"`
 	PorkbunBalanceCents int64  `json:"porkbun_balance_cents" desc:"Porkbun 余额（分）"`

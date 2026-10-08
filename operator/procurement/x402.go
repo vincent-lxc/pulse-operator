@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -34,6 +35,9 @@ type Accept struct {
 	MaxTimeoutSeconds int64          `json:"maxTimeoutSeconds"`
 	Extra             map[string]any `json:"extra"`
 }
+
+// ErrUnsupportedEscrow 表示 402 里的托管合约不在允许名单，或收款器和托管版本配错。
+var ErrUnsupportedEscrow = errors.New("x402_unsupported_escrow")
 
 // PayPolicy 是签名前的硬限制。金额必须和账单完全一致。
 type PayPolicy struct {
@@ -78,23 +82,50 @@ func ParsePaymentRequired(header string) (Requirements, error) {
 	return req, nil
 }
 
-// Select 从 accepts 里挑一条符合策略的条款。
+// Select 从 accepts 里挑一条符合策略的条款。exact 和 auth-capture 都合格时优先 exact。
 func Select(req Requirements, policy PayPolicy) (Accept, error) {
 	if policy.Amount == nil || policy.Amount.Sign() <= 0 {
 		return Accept{}, fmt.Errorf("bill amount is missing")
 	}
+	var fallback *Accept
 	var reason string
 	for _, item := range req.Accepts {
 		if err := acceptOK(item, policy); err != nil {
 			reason = err.Error()
 			continue
 		}
-		return item, nil
+		if strings.EqualFold(item.Scheme, "exact") {
+			return item, nil
+		}
+		if fallback == nil {
+			chosen := item
+			fallback = &chosen
+		}
+	}
+	if fallback != nil {
+		return *fallback, nil
 	}
 	if reason == "" {
 		reason = "no accepts entries"
 	}
 	return Accept{}, fmt.Errorf("no acceptable x402 terms: %s", reason)
+}
+
+// DecodedPaymentRequired 把 PAYMENT-REQUIRED 解成 JSON。解不开时只保留脱敏后的原文。
+func DecodedPaymentRequired(header string) string {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return ""
+	}
+	req, err := ParsePaymentRequired(header)
+	if err != nil {
+		return Redact(header)
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return ""
+	}
+	return Redact(string(raw))
 }
 
 func acceptOK(item Accept, policy PayPolicy) error {

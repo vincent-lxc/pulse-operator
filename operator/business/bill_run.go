@@ -40,6 +40,7 @@ type merchantResult struct {
 	Scheme       string
 	Payer        string
 	Receipt      string
+	Required     string
 	Pending      bool
 }
 
@@ -325,6 +326,9 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 	}
 	if bill.PorkbunOrderID == "" && bill.State != "kept_as_credit" {
 		paid, err := deps.merchant(ctx, bill)
+		if paid.Required != "" {
+			bill.X402Required = publicText(paid.Required)
+		}
 		if errors.Is(err, errAwaitingMint) {
 			bill.State = "bridged"
 			bill.ReasonCode = "awaiting_mint"
@@ -338,6 +342,10 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 			bill.State = "failed_merchant"
 			bill.ReasonCode = "checkout_needs_review"
 			bill.Reason = "porkbun asked for another x402 signature on an existing checkout"
+			bill.Evidence = evidence(bill, deps.policy.ChainID)
+			if auditErr := writeBillAudit(deps.audit, bill, "bill"); auditErr != nil {
+				return auditErr
+			}
 			if saveErr := saveProgress(deps, bill); saveErr != nil {
 				return saveErr
 			}
@@ -345,8 +353,19 @@ func executePay(ctx context.Context, bill *models.Bill, deps billDeps, cost, max
 		}
 		if err != nil {
 			bill.State = "failed_merchant"
+			bill.ReasonCode = "x402_rejected"
+			if errors.Is(err, procurement.ErrUnsupportedEscrow) {
+				bill.ReasonCode = "x402_unsupported_escrow"
+			}
 			bill.Reason = err.Error()
-			_ = saveProgress(deps, bill)
+			bill.Evidence = evidence(bill, deps.policy.ChainID)
+			auditErr := writeBillAudit(deps.audit, bill, "bill")
+			if saveErr := saveProgress(deps, bill); saveErr != nil {
+				return saveErr
+			}
+			if auditErr != nil {
+				return auditErr
+			}
 			return err
 		}
 		bill.PorkbunCheckoutID = paid.CheckoutID
@@ -522,7 +541,8 @@ func evidence(bill *models.Bill, chainID string) string {
 		"vault_tx": bill.VaultTx, "vault_chain": chainID,
 		"cctp_burn_tx": bill.CCTPBurnTx, "cctp_message": bill.CCTPMessageHash,
 		"base_mint_tx": bill.BaseMintTx, "forward_fee": bill.ForwardFeeUnits, "x402_scheme": bill.X402Scheme,
-		"x402_payer": bill.X402Payer, "porkbun_order_id": bill.PorkbunOrderID, "mode": bill.Mode,
+		"x402_payer": bill.X402Payer, "x402_required": publicText(bill.X402Required),
+		"porkbun_order_id": bill.PorkbunOrderID, "mode": bill.Mode,
 		"state": bill.State,
 	}, "", "  ")
 	return string(raw)
@@ -611,7 +631,8 @@ func EvidenceMarkdown(bill *models.Bill) string {
 - base mint: %s
 - porkbun order: %s
 - mode: %s
-`, bill.Domain, bill.Code, bill.State, publicText(bill.ReasonCode), publicText(bill.Reason), bill.DecisionHash, bill.Planner, bill.ModelID, publicText(bill.Rationale), bill.LatencyMS, bill.VaultTx, bill.CCTPBurnTx, bill.BaseMintTx, bill.PorkbunOrderID, bill.Mode)
+- x402 required: %s
+`, bill.Domain, bill.Code, bill.State, publicText(bill.ReasonCode), publicText(bill.Reason), bill.DecisionHash, bill.Planner, bill.ModelID, publicText(bill.Rationale), bill.LatencyMS, bill.VaultTx, bill.CCTPBurnTx, bill.BaseMintTx, bill.PorkbunOrderID, bill.Mode, publicText(bill.X402Required))
 }
 
 var assignedSecret = regexp.MustCompile(`(?i)\b(api[_-]?key|secret(?:api)?key|private[_-]?key|entity[_-]?secret|authorization)\b\s*[:=]\s*("[^"]*"|'[^']*'|\S+)`)
