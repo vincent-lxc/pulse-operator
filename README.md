@@ -148,13 +148,44 @@ current executor. Telegram sends when `TELEGRAM_BOT_TOKEN` and
 
 ## Real spend on Arc mainnet
 
-Domain bills (Porkbun register/renew, paid in USDC via x402 after a CCTP bridge from Arc to Base) are dry-run unless every mainnet gate passes. CI never spends. The step-by-step owner checklist is [docs/runbook-mainnet-porkbun.md](docs/runbook-mainnet-porkbun.md). A new mainnet vault address belongs in [deployments/arc-mainnet.json](deployments/arc-mainnet.json); do not reuse the testnet PolicyVault.
+**Headline proof:** the operator bought **pulseoperator.top** on Arc mainnet. Porkbun shows the domain **ACTIVE** from 2026-10-09 through 2027-10-09.
+
+**Demo:** https://youtu.be/LXr2mPJfAuo
+
+**Contact:** git_vincent@hotmail.com
+
+| Evidence | Value |
+|---|---|
+| Domain | `pulseoperator.top` ACTIVE 2026-10-09 → 2027-10-09 |
+| Porkbun order | `12041510` |
+| PolicyVault (Arc mainnet) | `0x8F7c66371ac347f96cE00d3e19b0f3ad54Dd8861` |
+| vault.pay tx | https://explorer.arc.io/tx/0x4e91ddebe5722dda6b6f0dfbba7467acd583dab43d5c1ffe5536b10e9b241d41 |
+| CCTP burn | `0x9c01b9538c60dfb6ac359b8307d3e9920dad702b9dcfb4c0d8c8e6c7b4c8c7cb` |
+| Base mint | `0x47f0f7713c6639b09b9ebb0d4c5aaafc091b4466bb062bb97820a06cc7b6968c` |
+| Base settlement | https://basescan.org/tx/0x769d5160d1af40839f25767c6a9e9d21e6d60f2a5e582c7dcf20144c81624623 |
+| decisionHash | `0xbfcba36e05c70c04141c43227f85c1c5f491a530044c373ce1c69cd2de24c1c5` |
+| Amount | merchant 1.63 USDC; vault.pay moved ~1.70 USDC (cost + CCTP forward fee buffer) |
+
+```mermaid
+flowchart LR
+  bill[bill] --> planner[planner]
+  planner --> pay["PolicyVault.pay (Arc)"]
+  pay --> cctp["CCTP Arc→Base"]
+  cctp --> x402["Porkbun x402"]
+  x402 --> active["order / domain ACTIVE"]
+```
+
+**Safety.** Spend caps and the mainnet gates (`CONFIRM_MAINNET`, `--i-understand-real-money`) stay in front of any broadcast. Each merchant attempt key gets one x402 signature. `merchant-reset` opens the next attempt only after that authorization expires and the authorization is unused. Hardening: [#7](https://github.com/vincent-lxc/pulse-operator/pull/7) (one signature per attempt key), [#8](https://github.com/vincent-lxc/pulse-operator/pull/8) (repeat the 402 body; reset only after expiry and an unused authorization), [#9](https://github.com/vincent-lxc/pulse-operator/pull/9) (load the signed attempt when shadow SQLite columns are present).
+
+Further domain bills stay dry-run unless every mainnet gate passes. CI never spends. The step-by-step owner checklist is [docs/runbook-mainnet-porkbun.md](docs/runbook-mainnet-porkbun.md). Record a mainnet vault address in [deployments/arc-mainnet.json](deployments/arc-mainnet.json); do not reuse the testnet PolicyVault. The commands below are a dry-run sample for `pulseoperator.dev`. The mainnet purchase is **pulseoperator.top**.
 
 ```bash
 cd operator
 go run ./cmd/pulse bill add porkbun --domain pulseoperator.dev
 go run ./cmd/pulse bill run --config config/dry-run.yaml --id bill-register-pulseoperator-dev
 ```
+
+Event diff: <https://github.com/vincent-lxc/pulse-operator/compare/tameion-start...main>
 
 **The model does not hold the money.** With `planner.driver: gateway` the Vercel AI Gateway model (`openai/gpt-5.4-nano` by default, key `AI_GATEWAY_API_KEY`) chooses `pay`, `defer`, `escalate`, or `reject`, plus a rationale. The bill prompt includes the domain, the quote, the vault balance, and the category caps. Go then drops any choice the deterministic rules do not already allow. It cannot raise a category cap, add a payee, or exceed a budget or the vault balance. A model `reject` of a bill the rules still allow is stored as `escalate`, not a closed bill. Bad JSON, a timeout, an HTTP error, or a failed on-chain read fail closed: a would-be payment is recorded as `escalate` and is not submitted. `planner.driver: rules` is the default and what CI runs; it does not call a model. `maxBillUSDC` and `maxSpendPerRunUSDC` escalate a bill that would pass them, in every mode. `bill approve`, `bill reopen`, and `bill close` act on an escalation that never reached the vault. `bill approve` requires `--yes` outside dry-run (the flag defaults to false) and, on mainnet, `--i-understand-real-money`. It refuses a Porkbun monthly or daily limit. `max_bill` and `max_spend_per_run` stay in force unless `--override-cap` is paired with `--override-reason`, which is written to the audit as `owner_override` and into the decision rationale. The admin Bills page shows Approve only in dry-run, and that handler does not set either confirm flag. Testnet, live, and mainnet approval is CLI-only. Bill approval, bill reopen and close, on-chain approve/reject, and `runonce`, `recordrevenue`, `cctp`, and `gateway` reject any caller that is not loopback, in every mode. A refused `bill approve` leaves the hashed columns unchanged and records `approve_blocked` in the audit. The admin view listens on all interfaces and the framework `/api/servermanage/testtoken` route cannot be disabled here; it treats RFC1918 as local. Mainnet refuses to start while `-view` is not `0` unless `acknowledgeExposedAdminView: true` or `OPERATOR_ACK_EXPOSED_VIEW=1`. API and gRPC bind to `127.0.0.1` by default. A dry-run balance is the fixture minus what this process has already committed; a new `bill run` or `bill approve` starts from the fixture again.
 
