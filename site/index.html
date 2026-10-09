@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pulse Operator</title>
+    <meta
+      name="description"
+      content="Pulse Operator — an AI agent that pays real bills in USDC, inside on-chain limits."
+    />
+    <meta name="theme-color" content="#141311" />
+    <link rel="canonical" href="https://pulseoperator.top/" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#content">Skip to content</a>
+    <div class="sheet">
+      <header class="mast">
+        <a class="word" href="#content">Pulse Operator</a>
+        <nav aria-label="Page">
+          <a href="#demo">Demo</a>
+          <a href="#flow">Flow</a>
+          <a href="#receipts">Receipts</a>
+          <a href="#safety">Safety</a>
+        </nav>
+      </header>
+
+      <main id="content">
+        <section class="hero" aria-labelledby="hero-title">
+          <p class="kicker">ACTIVE · 2026-10-09 → 2027-10-09</p>
+          <h1 id="hero-title">
+            Pulse Operator — an AI agent that pays real bills in USDC, inside
+            on-chain limits.
+          </h1>
+          <p class="note">This very domain was bought autonomously by the agent.</p>
+        </section>
+
+        <section id="demo" aria-labelledby="demo-title">
+          <h2 id="demo-title">Demo</h2>
+          <div class="player">
+            <iframe
+              src="https://www.youtube-nocookie.com/embed/LXr2mPJfAuo"
+              title="Pulse Operator YouTube demo"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowfullscreen
+              loading="lazy"
+              referrerpolicy="strict-origin-when-cross-origin"
+            ></iframe>
+          </div>
+        </section>
+
+        <section id="flow" aria-labelledby="flow-title">
+          <h2 id="flow-title">Flow</h2>
+          <ol>
+            <li>bill</li>
+            <li>planner decision</li>
+            <li>PolicyVault.pay (Arc mainnet)</li>
+            <li>Circle CCTP V2 Arc→Base</li>
+            <li>Porkbun x402 USDC checkout</li>
+            <li>domain ACTIVE</li>
+          </ol>
+        </section>
+
+        <section id="receipts" aria-labelledby="receipts-title">
+          <h2 id="receipts-title">Receipts</h2>
+          <table>
+            <tbody>
+              <tr>
+                <th scope="row">Domain</th>
+                <td>
+                  pulseoperator.top
+                  <span class="status">ACTIVE</span>
+                  <span class="span">2026-10-09 → 2027-10-09</span>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Porkbun order</th>
+                <td>12041510</td>
+              </tr>
+              <tr>
+                <th scope="row">PolicyVault</th>
+                <td>
+                  <a
+                    class="hash"
+                    href="https://explorer.arc.io/address/0x8F7c66371ac347f96cE00d3e19b0f3ad54Dd8861"
+                    >0x8F7c66371ac347f96cE00d3e19b0f3ad54Dd8861</a
+                  >
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">decisionHash</th>
+                <td>
+                  <code class="hash"
+                    >0xbfcba36e05c70c04141c43227f85c1c5f491a530044c373ce1c69cd2de24c1c5</code
+                  >
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">vault.pay</th>
+                <td>
+                  <span class="amt">~1.70 USDC incl. CCTP fee buffer</span>
+                  <a
+                    class="hash"
+                    href="https://explorer.arc.io/tx/0x4e91ddebe5722dda6b6f0dfbba7467acd583dab43d5c1ffe5536b10e9b241d41"
+                    >0x4e91ddebe5722dda6b6f0dfbba7467acd583dab43d5c1ffe5536b10e9b241d41</a
+                  >
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">CCTP burn</th>
+                <td>
+                  <a
+                    class="hash"
+                    href="https://explorer.arc.io/tx/0x9c01b9538c60dfb6ac359b8307d3e9920dad702b9dcfb4c0d8c8e6c7b4c8c7cb"
+                    >0x9c01b9538c60dfb6ac359b8307d3e9920dad702b9dcfb4c0d8c8e6c7b4c8c7cb</a
+                  >
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Base mint</th>
+                <td>
+                  <a
+                    class="hash"
+                    href="https://basescan.org/tx/0x47f0f7713c6639b09b9ebb0d4c5aaafc091b4466bb062bb97820a06cc7b6968c"
+                    >0x47f0f7713c6639b09b9ebb0d4c5aaafc091b4466bb062bb97820a06cc7b6968c</a
+                  >
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">Base x402 settlement</th>
+                <td>
+                  <span class="amt">1.63 USDC</span>
+                  <a
+                    class="hash"
+                    href="https://basescan.org/tx/0x769d5160d1af40839f25767c6a9e9d21e6d60f2a5e582c7dcf20144c81624623"
+                    >0x769d5160d1af40839f25767c6a9e9d21e6d60f2a5e582c7dcf20144c81624623</a
+                  >
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="safety" aria-labelledby="safety-title">
+          <h2 id="safety-title">Safety</h2>
+          <ul>
+            <li>on-chain category budget</li>
+            <li>per-tx cap</li>
+            <li>payee allowlist</li>
+            <li>owner pause/sweep</li>
+            <li>one signature per merchant attempt</li>
+            <li>reset only after authorization expiry</li>
+            <li>
+              hardening PRs
+              <a href="https://github.com/vincent-lxc/pulse-operator/pull/7">#7</a>
+              <a href="https://github.com/vincent-lxc/pulse-operator/pull/8">#8</a>
+              <a href="https://github.com/vincent-lxc/pulse-operator/pull/9">#9</a>
+            </li>
+          </ul>
+        </section>
+      </main>
+
+      <footer>
+        <p>
+          <a href="https://github.com/vincent-lxc/pulse-operator"
+            >github.com/vincent-lxc/pulse-operator</a
+          >
+        </p>
+        <p>Built for Tameion Agents Hackathon (Canteen x Circle).</p>
+        <p>
+          <a href="mailto:git_vincent@hotmail.com">git_vincent@hotmail.com</a>
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>
