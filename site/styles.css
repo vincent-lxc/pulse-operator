@@ -1,0 +1,381 @@
+/* Instrument Serif and IBM Plex Mono, SIL OFL, self-hosted. Licenses in fonts/. */
+
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("fonts/instrument-serif-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --bg: #141311;
+  --ink: #f3ecdf;
+  --muted: #b7ae9e;
+  --line: rgba(243, 236, 223, 0.16);
+  --brass: #e2b15a;
+  --hole: #0b0a09;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--bg);
+  background-image: radial-gradient(circle at 12px 10px, var(--hole) 0 5px, var(--brass) 5.5px);
+  background-size: 24px 18px;
+  background-repeat: repeat-x;
+  color: var(--ink);
+  font-family: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+::selection {
+  background: var(--brass);
+  color: var(--hole);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+a {
+  color: inherit;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(226, 177, 90, 0.85);
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--brass);
+}
+
+.skip {
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  z-index: 2;
+  padding: 0.4rem 0.7rem;
+  background: var(--brass);
+  color: var(--hole);
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.skip:focus {
+  transform: none;
+}
+
+.sheet {
+  width: min(44rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2.75rem 0 4rem;
+}
+
+.mast {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.word {
+  font-family: "Instrument Serif", "Iowan Old Style", Palatino, Georgia, serif;
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.1rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+nav a {
+  text-decoration: none;
+}
+
+nav a:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--brass);
+}
+
+.hero {
+  padding: 2.5rem 0 2rem;
+}
+
+.kicker {
+  margin: 0 0 1rem;
+  color: var(--brass);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1,
+h2 {
+  font-family: "Instrument Serif", "Iowan Old Style", Palatino, Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2.15rem, 5.6vw, 3.15rem);
+  line-height: 1.08;
+}
+
+.note {
+  margin: 1.25rem 0 0;
+  max-width: 36rem;
+  color: var(--muted);
+}
+
+section + section {
+  padding-top: 2.25rem;
+}
+
+h2 {
+  margin: 0 0 1rem;
+  font-size: 1.85rem;
+  line-height: 1.1;
+}
+
+.player {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--hole);
+  border: 1px solid var(--line);
+}
+
+.player iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.flow ol,
+.safety ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.flow ol {
+  border-left: 1px solid var(--line);
+  margin-left: 0.35rem;
+}
+
+.flow li {
+  position: relative;
+  padding: 0 0 1.15rem 1.35rem;
+}
+
+.flow li:last-child {
+  padding-bottom: 0;
+}
+
+.flow li::before {
+  content: "";
+  position: absolute;
+  left: -0.32rem;
+  top: 0.4rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1px solid var(--brass);
+  border-radius: 50%;
+  background: var(--bg);
+}
+
+.flow li:last-child::before {
+  background: var(--brass);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero h1,
+  .flow li {
+    animation: rise 640ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  .flow li:nth-child(1) { animation-delay: 40ms; }
+  .flow li:nth-child(2) { animation-delay: 90ms; }
+  .flow li:nth-child(3) { animation-delay: 140ms; }
+  .flow li:nth-child(4) { animation-delay: 190ms; }
+  .flow li:nth-child(5) { animation-delay: 240ms; }
+  .flow li:nth-child(6) { animation-delay: 290ms; }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--line);
+  font-weight: 400;
+  text-align: left;
+  vertical-align: baseline;
+}
+
+th {
+  width: 11.5rem;
+  padding-right: 1rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+tr {
+  transition: background-color 160ms ease;
+}
+
+tr:hover {
+  background: rgba(226, 177, 90, 0.06);
+}
+
+.status {
+  margin-left: 0.55rem;
+  color: var(--brass);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+}
+
+.span,
+.amt {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--muted);
+}
+
+.amt {
+  color: var(--ink);
+}
+
+.hash {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 0.15rem;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+
+code.hash {
+  font-family: inherit;
+}
+
+.safety li {
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.safety li::before {
+  content: "— ";
+  color: var(--brass);
+}
+
+.safety a + a {
+  margin-left: 0.65rem;
+}
+
+footer {
+  margin-top: 2.75rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+footer p {
+  margin: 0.35rem 0;
+}
+
+@media (max-width: 40rem) {
+  .sheet {
+    width: min(44rem, calc(100% - 1.5rem));
+    padding-top: 2.25rem;
+  }
+
+  th,
+  td {
+    display: block;
+    width: auto;
+    padding-right: 0;
+  }
+
+  th {
+    padding-bottom: 0.15rem;
+    border-bottom: 0;
+  }
+
+  td {
+    padding-top: 0;
+  }
+
+}
