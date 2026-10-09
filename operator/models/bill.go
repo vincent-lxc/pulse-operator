@@ -110,27 +110,14 @@ func SaveBill(row *Bill) error {
 
 // FindBill 按编号查找账单。
 func FindBill(code string) (*Bill, error) {
-	if err := ensureModel(NewBill()); err != nil {
+	rows, err := loadBills("code = ?", strings.TrimSpace(code), 5)
+	if err != nil || len(rows) == 0 {
 		return nil, err
-	}
-	search := newSearch(NewBill(), 5)
-	search.AddWhereN("Code", strings.TrimSpace(code))
-	var rows []*Bill
-	if err := getDataAction().Load(search, &rows); err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, nil
 	}
 	return rows[0], nil
 }
 
 // ListBills 返回全部账单。
 func ListBills() ([]*Bill, error) {
-	if err := ensureModel(NewBill()); err != nil {
-		return nil, err
-	}
-	var rows []*Bill
-	err := getDataAction().Load(newSearch(NewBill(), 500), &rows)
-	return rows, err
+	return loadBills("", nil, 500)
 }
