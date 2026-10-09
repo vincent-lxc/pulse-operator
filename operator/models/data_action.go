@@ -3,6 +3,7 @@ package models
 
 import (
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/digitalwayhk/core/pkg/persistence/database/oltp"
@@ -38,7 +39,28 @@ func ensureModel(model interface{}) error {
 		return NewBusinessError("模型类型无效")
 	}
 	result := reflect.New(reflect.SliceOf(modelType)).Interface()
-	return getDataAction().Load(newSearch(model, 1), result)
+	err := getDataAction().Load(newSearch(model, 1), result)
+	// 账单表已经在，但 SELECT * 会扫进类型对不上的影子列。这里只负责把表备好。
+	if ignorableScanMismatch(err) && isBillModel(model) {
+		return nil
+	}
+	return err
+}
+
+func isBillModel(model interface{}) bool {
+	modelType := reflect.TypeOf(model)
+	for modelType != nil && modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+	return modelType != nil && modelType.Name() == "Bill"
+}
+
+func ignorableScanMismatch(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Scan error") || strings.Contains(msg, "converting driver.Value")
 }
 
 // EnsureStorage 在接受请求前创建全部模型表。
